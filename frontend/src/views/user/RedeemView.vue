@@ -41,9 +41,21 @@
                   class="input py-3 pl-12 text-lg"
                 />
               </div>
-              <p class="input-hint">
-                {{ t('redeem.redeemCodeHint') }}
-              </p>
+              <div class="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                <p class="text-xs text-gray-500 dark:text-dark-400">
+                  {{ t('redeem.redeemCodeHint') }}
+                </p>
+                <a
+                  href="https://pay.ldxp.cn/shop/VOJFJ31H"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1 text-xs text-gray-500 transition-colors hover:text-primary-600 dark:text-dark-400 dark:hover:text-primary-400"
+                >
+                  <span>需要兑换码？</span>
+                  <span class="font-medium underline underline-offset-2">点击获取</span>
+                  <Icon name="externalLink" size="xs" aria-hidden="true" />
+                </a>
+              </div>
             </div>
 
             <button
