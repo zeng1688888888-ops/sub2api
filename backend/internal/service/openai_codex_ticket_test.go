@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +33,17 @@ func ticketTestAccount(id int64) *Account {
 		Type:        AccountTypeOAuth,
 		Credentials: map[string]any{"access_token": "tok", "chatgpt_account_id": "acc-1"},
 	}
+}
+
+func ticketTestPlanToken(plan, accountID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, _ := json.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]string{
+			"chatgpt_plan_type":  plan,
+			"chatgpt_account_id": accountID,
+		},
+	})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
 
 func ticketTestService(t *testing.T, cfg config.OpenAICodexTicketConfig, upstream HTTPUpstream) *OpenAIGatewayService {
@@ -186,6 +202,120 @@ func TestApplyOpenAICodexTicket_FailOpenSkipsInject(t *testing.T) {
 	require.False(t, svc.openAICodexTicketBlocksAccount(ticketTestAccount(41), "gpt-6-astra"))
 }
 
+func TestOpenAICodexTicket_FailOpenPreservesSchedulingAndForwarding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := time.Now()
+	cases := []struct {
+		name   string
+		ticket *openAICodexTicket
+	}{
+		{name: "missing"},
+		{name: "expired", ticket: &openAICodexTicket{State: fakeCodexTicketState(292), Length: 292, ExpiresAt: now.Add(-time.Minute)}},
+		{name: "wrong_length", ticket: &openAICodexTicket{State: fakeCodexTicketState(312), Length: 312, ExpiresAt: now.Add(time.Hour)}},
+		{name: "wrong_prefix", ticket: &openAICodexTicket{State: strings.Repeat("X", 292), Length: 292, ExpiresAt: now.Add(time.Hour)}},
+		{name: "missing_expiry", ticket: &openAICodexTicket{State: fakeCodexTicketState(292), Length: 292}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, model := range []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel} {
+				t.Run(model, func(t *testing.T) {
+					upstream := &httpUpstreamRecorder{err: io.EOF}
+					svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: false}, upstream)
+					account := ticketTestAccount(41)
+					if tc.ticket != nil {
+						account.Extra = map[string]any{openAICodexTicketExtraKey(model): tc.ticket}
+					}
+					require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, model, false))
+					require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, model, true))
+					for _, status := range OpenAICodexTicketStatuses(account, svc.openAICodexTicketConfig(), now) {
+						require.False(t, status.Ready)
+						require.False(t, status.Blocked)
+					}
+					for _, transport := range []string{"http", "passthrough", "websocket"} {
+						t.Run(transport, func(t *testing.T) {
+							body := []byte(`{"model":` + jsonString(model) + `,"stream":true}`)
+							c, _ := gin.CreateTestContext(httptest.NewRecorder())
+							c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+							c.Request.Header.Set(openAICodexTurnStateHeader, "client-state")
+							c.Request.Header.Set("x-codex-beta-features", "client-feature")
+							var headers http.Header
+							var err error
+							if transport == "websocket" {
+								headers, _, err = svc.buildOpenAIWSHeaders(context.Background(), c, account, "test-token",
+									OpenAIWSProtocolDecision{Transport: OpenAIUpstreamTransportResponsesWebsocketV2},
+									true, "client-state", "", "", model, "")
+							} else {
+								var req *http.Request
+								if transport == "passthrough" {
+									req, err = svc.buildUpstreamRequestOpenAIPassthrough(context.Background(), c, account, body, "test-token")
+								} else {
+									req, err = svc.buildUpstreamRequest(context.Background(), c, account, body, "test-token", true, "", true)
+								}
+								if req != nil {
+									headers = req.Header
+								}
+							}
+							require.NoError(t, err)
+							require.Equal(t, "client-state", headers.Get(openAICodexTurnStateHeader))
+							require.Equal(t, "client-feature", headers.Get("x-codex-beta-features"))
+							require.Equal(t, "Bearer test-token", headers.Get("Authorization"))
+						})
+					}
+					require.Empty(t, upstream.requests, "ordinary forwarding must not wait for a harvest probe")
+				})
+			}
+		})
+	}
+}
+
+func TestOpenAICodexTicket_FailOpenAfterFailedProbe(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		state  string
+	}{
+		{name: "proxy_failure", err: io.EOF},
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "bad_request", status: http.StatusBadRequest},
+		{name: "unauthorized", status: http.StatusUnauthorized},
+		{name: "rate_limited", status: http.StatusTooManyRequests},
+		{name: "unavailable", status: http.StatusServiceUnavailable},
+		{name: "invalid_ticket", status: http.StatusOK, state: fakeCodexTicketState(312)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set(openAICodexTurnStateHeader, tc.state)
+			upstream := &httpUpstreamRecorder{err: tc.err, resp: &http.Response{
+				StatusCode: tc.status, Header: headers, Body: io.NopCloser(strings.NewReader("")),
+			}}
+			svc := ticketTestService(t, config.OpenAICodexTicketConfig{
+				Enabled: true, FailClosed: false, HarvestProxyURL: "http://proxy.example.com:8080",
+			}, upstream)
+			account := ticketTestAccount(41)
+			account.Status = StatusActive
+			account.Schedulable = true
+			account.Extra = map[string]any{"existing": true}
+			repo := &codexTicketRefreshRepo{}
+			svc.accountRepo = repo
+			svc.probeOnceOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel)
+			require.Len(t, upstream.requests, 1)
+			require.Empty(t, repo.updates)
+			require.Equal(t, StatusActive, account.Status)
+			require.True(t, account.Schedulable)
+			require.Equal(t, map[string]any{"existing": true}, account.Extra)
+			require.Nil(t, svc.lookupOpenAICodexTicket(account, openAICodexTicketDefaultModel))
+			require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, openAICodexTicketDefaultModel, false))
+			outboundHeaders := http.Header{}
+			outboundHeaders.Set(openAICodexTurnStateHeader, "client-state")
+			require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, outboundHeaders))
+			require.Equal(t, "client-state", outboundHeaders.Get(openAICodexTurnStateHeader))
+			require.Len(t, upstream.requests, 1, "a failed harvest must not trigger a probe on the request path")
+		})
+	}
+}
+
 func TestApplyOpenAICodexTicket_DisabledNoop(t *testing.T) {
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: false, FailClosed: true}, nil)
 	h := http.Header{}
@@ -207,12 +337,12 @@ func TestHarvestOpenAICodexTicket_StopsAt292AndUsesHarvestProxy(t *testing.T) {
 			{
 				StatusCode: http.StatusOK,
 				Header:     header312,
-				Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+				Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
 			},
 			{
 				StatusCode: http.StatusOK,
 				Header:     header292,
-				Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+				Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
 			},
 		},
 	}
@@ -242,6 +372,13 @@ func TestHarvestOpenAICodexTicket_StopsAt292AndUsesHarvestProxy(t *testing.T) {
 	require.Equal(t, openAICodexAstraMinVersion, upstream.requests[0].Header.Get("version"))
 	require.Equal(t, HTTPUpstreamProfileOpenAIHarvest, HTTPUpstreamProfileFromContext(upstream.requests[0].Context()))
 	require.True(t, upstream.requests[0].Close)
+	var probeBody struct {
+		ParallelToolCalls bool     `json:"parallel_tool_calls"`
+		Include           []string `json:"include"`
+	}
+	require.NoError(t, json.NewDecoder(upstream.requests[0].Body).Decode(&probeBody))
+	require.True(t, probeBody.ParallelToolCalls)
+	require.Equal(t, []string{"reasoning.encrypted_content"}, probeBody.Include)
 }
 
 func TestHarvestOpenAICodexTicket_HTTP503DoesNotAbortHunt(t *testing.T) {
@@ -258,7 +395,7 @@ func TestHarvestOpenAICodexTicket_HTTP503DoesNotAbortHunt(t *testing.T) {
 	responses = append(responses, &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     header292,
-		Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+		Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
 	})
 	upstream := &httpUpstreamRecorder{responses: responses}
 	svc := ticketTestService(t, config.OpenAICodexTicketConfig{
@@ -366,7 +503,7 @@ func (u *codexTicketConcurrentUpstream) Do(req *http.Request, _ string, _ int64,
 	}
 	h := http.Header{}
 	h.Set(openAICodexTurnStateHeader, fakeCodexTicketState(292))
-	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {}\n\n"))}, nil
+	return &http.Response{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))}, nil
 }
 func TestRefreshOpenAICodexTickets_ConcurrentModelsPreserveAccountSnapshot(t *testing.T) {
 	account := ticketTestAccount(41)
@@ -404,12 +541,47 @@ func TestProbeOpenAICodexTicket_RejectsInvalidState(t *testing.T) {
 	for _, state := range []string{fakeCodexTicketState(312), strings.Repeat("X", 292), ""} {
 		h := http.Header{}
 		h.Set(openAICodexTurnStateHeader, state)
-		upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader(""))}}}
+		upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: 200, Header: h, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n"))}}}
 		svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, HarvestProxyURL: "http://proxy.example.com:8080"}, upstream)
 		account := ticketTestAccount(41)
 		svc.probeOnceOpenAICodexTicket(context.Background(), account, "gpt-6-astra")
 		require.Nil(t, svc.lookupOpenAICodexTicket(account, "gpt-6-astra"))
 	}
+}
+
+func TestOpenAICodexTicketProbeCompleted(t *testing.T) {
+	require.True(t, openAICodexTicketProbeCompleted([]byte("data: {\"type\":\"response.completed\"}\n\n")))
+	require.True(t, openAICodexTicketProbeCompleted([]byte("event: response.completed\ndata: {}\n\n")))
+	require.True(t, openAICodexTicketProbeCompleted([]byte("event: response.completed\r\ndata: {\"type\":\"response.completed\",\r\ndata: \"response\":{\"status\":\"completed\"}}\r\n\r\n")))
+	require.False(t, openAICodexTicketProbeCompleted([]byte("data: {\"type\":\"response.output_text.delta\"}\n\n")))
+	require.False(t, openAICodexTicketProbeCompleted([]byte("data: {}\n\n")))
+	for _, stream := range []string{
+		"data: {\"type\":\"response.completed\"\n\n",
+		"data: {\"type\":\"response.completed\"}\n",
+		"event: response.completed\ndata: {\n\n",
+		"event: response.completed\ndata: {\"type\":\"response.failed\"}\n\n",
+		"event: response.failed\ndata: {\"type\":\"response.completed\"}\n\n",
+		"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"incomplete\"}}\n\n",
+		"event: response.completed\ndata: [DONE]\n\n",
+		"data: {\"type\":\"error\"}\n\n",
+	} {
+		require.False(t, openAICodexTicketProbeCompleted([]byte(stream)), "invalid completion: %q", stream)
+	}
+}
+
+func TestFireOpenAICodexTicketProbeRequiresCompletedStream(t *testing.T) {
+	state := fakeCodexTicketState(292)
+	h := http.Header{}
+	h.Set(openAICodexTurnStateHeader, state)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{{
+		StatusCode: http.StatusOK,
+		Header:     h,
+		Body:       io.NopCloser(strings.NewReader("data: {}\n\n")),
+	}}}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{}, upstream)
+	_, status, err := svc.fireOpenAICodexTicketProbe(context.Background(), ticketTestAccount(41), "tok", "gpt-6-astra", "http://proxy.example.com:8080", time.Second)
+	require.Equal(t, http.StatusOK, status)
+	require.Error(t, err)
 }
 func TestOpenAICodexTicket_RequiresActualLengthAndExpiry(t *testing.T) {
 	ticket := &openAICodexTicket{State: fakeCodexTicketState(312), Length: 292, ExpiresAt: time.Now().Add(time.Hour)}
@@ -417,6 +589,150 @@ func TestOpenAICodexTicket_RequiresActualLengthAndExpiry(t *testing.T) {
 	ticket.State = fakeCodexTicketState(292)
 	ticket.ExpiresAt = time.Time{}
 	require.False(t, ticket.valid(time.Now(), 292))
+}
+
+func TestOpenAICodexTicketTargetLength_FollowsPlan(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		plan string
+		want int
+	}{
+		{name: "free", plan: "free", want: openAICodexTicketPersonalLength},
+		{name: "personal", plan: "plus", want: openAICodexTicketPersonalLength},
+		{name: "pro", plan: "pro", want: openAICodexTicketPersonalLength},
+		{name: "team", plan: "team", want: openAICodexTicketTeamLength},
+		{name: "business", plan: "business", want: openAICodexTicketTeamLength},
+		{name: "business_prolite", plan: "self_serve_business_prolite", want: openAICodexTicketTeamLength},
+		{name: "unknown", plan: "", want: openAICodexTicketPersonalLength},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			account := ticketTestAccount(41)
+			account.Credentials["access_token"] = ticketTestPlanToken(tc.plan, "acc-1")
+			require.Equal(t, tc.want, openAICodexTicketTargetLength(account, config.OpenAICodexTicketConfig{}))
+		})
+	}
+}
+
+func TestOpenAICodexTicketTargetLength_ExplicitOverride(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Credentials["access_token"] = ticketTestPlanToken("team", "acc-1")
+	require.Equal(t, 300, openAICodexTicketTargetLength(account, config.OpenAICodexTicketConfig{TargetLength: 300}))
+}
+
+func TestOpenAICodexTicketBusinessProliteAccountMismatchIgnoresPlan(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Credentials["access_token"] = ticketTestPlanToken("self_serve_business_prolite", "other-account")
+	require.Empty(t, openAICodexTicketPlan(account))
+	require.Equal(t, openAICodexTicketPersonalLength, openAICodexTicketTargetLength(account, config.OpenAICodexTicketConfig{}))
+}
+
+func TestOpenAICodexTicketBusinessProliteAccepts332Rejects292(t *testing.T) {
+	for _, length := range []int{openAICodexTicketTeamLength, openAICodexTicketPersonalLength} {
+		t.Run(fmt.Sprint(length), func(t *testing.T) {
+			account := ticketTestAccount(41)
+			account.Credentials["access_token"] = ticketTestPlanToken("self_serve_business_prolite", "acc-1")
+			svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true}, nil)
+			state := fakeCodexTicketState(length)
+			svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+				AccountID: account.ID, Model: openAICodexTicketDefaultModel, State: state,
+				Length: length, CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+			})
+			h := http.Header{}
+			err := svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, h)
+			if length == openAICodexTicketTeamLength {
+				require.NoError(t, err)
+				require.Equal(t, state, h.Get(openAICodexTurnStateHeader))
+			} else {
+				require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+				require.Empty(t, h.Get(openAICodexTurnStateHeader))
+			}
+		})
+	}
+}
+
+func TestOpenAICodexTicketTeam332IsInjectedAndValid(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Credentials["access_token"] = ticketTestPlanToken("team", "acc-1")
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true}, nil)
+	state := fakeCodexTicketState(openAICodexTicketTeamLength)
+	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		AccountID: account.ID, Model: openAICodexTicketDefaultModel, State: state,
+		Length: len(state), CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+	h := http.Header{}
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, h))
+	require.Equal(t, state, h.Get(openAICodexTurnStateHeader))
+	require.Equal(t, openAICodexTicketTeamLength, len(h.Get(openAICodexTurnStateHeader)))
+}
+
+func TestOpenAICodexTicketTeamRejectsPersonal292(t *testing.T) {
+	account := ticketTestAccount(41)
+	account.Credentials["access_token"] = ticketTestPlanToken("team", "acc-1")
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true}, nil)
+	state := fakeCodexTicketState(openAICodexTicketPersonalLength)
+	svc.storeOpenAICodexTicket(context.Background(), account, &openAICodexTicket{
+		AccountID: account.ID, Model: openAICodexTicketDefaultModel, State: state,
+		Length: len(state), CapturedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+	h := http.Header{}
+	err := svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, h)
+	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.Empty(t, h.Get(openAICodexTurnStateHeader))
+}
+
+func TestOpenAICodexTicketAPIKeyIsPassthrough(t *testing.T) {
+	account := &Account{
+		ID:          42,
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "api-key"},
+	}
+	svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true}, nil)
+	h := http.Header{}
+	h.Set(openAICodexTurnStateHeader, "client-state")
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, h))
+	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
+	require.Empty(t, OpenAICodexTicketStatuses(account, svc.openAICodexTicketConfig(), time.Now()))
+}
+
+func TestHarvestOpenAICodexTicket332PersistsAndRestoresByPlan(t *testing.T) {
+	for _, plan := range []string{"team", "business", "self_serve_business_prolite"} {
+		t.Run(plan, func(t *testing.T) {
+			account := ticketTestAccount(41)
+			account.Status = StatusActive
+			account.Credentials["access_token"] = ticketTestPlanToken(plan, "acc-1")
+			state := fakeCodexTicketState(332)
+			h := http.Header{}
+			h.Set(openAICodexTurnStateHeader, state)
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{{
+				StatusCode: http.StatusOK, Header: h,
+				Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
+			}}}
+			cfg := config.OpenAICodexTicketConfig{
+				Enabled: true, FailClosed: true, Models: []string{openAICodexTicketDefaultModel},
+				HarvestProxyURL: "http://proxy.example.com:8080",
+			}
+			repo := &codexTicketRefreshRepo{accounts: []Account{*account}}
+			svc := ticketTestService(t, cfg, upstream)
+			svc.accountRepo = repo
+			svc.probeOnceOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel)
+			require.Len(t, repo.updates, 1)
+			account.Extra = repo.updates
+			// A fresh service must recover the persisted ticket without a new probe.
+			restored := ticketTestService(t, cfg, upstream)
+			restored.accountRepo = &codexTicketRefreshRepo{accounts: []Account{*account}}
+			statuses := OpenAICodexTicketStatuses(account, cfg, time.Now())
+			require.Len(t, statuses, 1)
+			require.True(t, statuses[0].Ready)
+			require.False(t, statuses[0].Blocked)
+			require.False(t, restored.openAICodexTicketBlocksAccount(account, openAICodexTicketDefaultModel))
+			out := http.Header{}
+			require.NoError(t, restored.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, out))
+			require.Equal(t, state, out.Get(openAICodexTurnStateHeader))
+			restored.refreshOpenAICodexTickets(context.Background())
+			require.Len(t, upstream.requests, 1)
+		})
+	}
 }
 
 // /responses/compact 的出站模型被 Forward 改写为 gateway.openai_compact_model

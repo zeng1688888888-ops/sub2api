@@ -1,11 +1,14 @@
 package service
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -26,11 +29,14 @@ const (
 	openAICodexTicketExtraKeyPrefix  = "codex_turn_ticket:"
 	openAICodexAstraMinVersion       = "0.153.4"
 	openAICodexTicketStatePrefix     = "gAAAAA"
+	openAICodexTicketPersonalLength  = 292
+	openAICodexTicketTeamLength      = 332
 	openAICodexTicketDefaultModel    = "gpt-6-astra"
 	openAICodexTicketDefaultSolModel = "gpt-5.6-sol"
+	openAICodexTicketMaxProbeBody    = 1 << 20
 )
 
-// ErrOpenAICodexTicketUnavailable 表示该号该模型没有可用的 292 门票，
+// ErrOpenAICodexTicketUnavailable 表示该号该模型没有符合套餐长度的门票，
 // 且 fail_closed 禁止裸打业务请求。
 var ErrOpenAICodexTicketUnavailable = errors.New("codex turn-state ticket unavailable")
 
@@ -66,7 +72,7 @@ func (s *OpenAIGatewayService) openAICodexTicketConfig() config.OpenAICodexTicke
 		cfg = s.cfg.Gateway.OpenAICodexTicket
 	}
 	if cfg.TargetLength <= 0 {
-		cfg.TargetLength = 292
+		cfg.TargetLength = openAICodexTicketPersonalLength
 	}
 	if cfg.TTLSeconds <= 0 {
 		cfg.TTLSeconds = 3600
@@ -84,6 +90,61 @@ func (s *OpenAIGatewayService) openAICodexTicketConfig() config.OpenAICodexTicke
 		cfg.Models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
 	}
 	return cfg
+}
+
+// openAICodexTicketTargetLength chooses the expected state shape from the
+// account's ChatGPT plan hint. The hint is only a routing heuristic; the
+// upstream still authenticates and accepts/rejects the injected state.
+// Explicit non-default target_length remains an escape hatch for deployments
+// that need to pin a custom shape.
+func openAICodexTicketTargetLength(account *Account, cfg config.OpenAICodexTicketConfig) int {
+	targetLen := cfg.TargetLength
+	if targetLen <= 0 {
+		targetLen = openAICodexTicketPersonalLength
+	}
+	if targetLen != openAICodexTicketPersonalLength || account == nil {
+		return targetLen
+	}
+	if openAICodexTicketPlan(account) == "team" {
+		return openAICodexTicketTeamLength
+	}
+	return targetLen
+}
+
+func openAICodexTicketPlan(account *Account) string {
+	if account == nil || !account.IsOpenAIOAuthLike() {
+		return ""
+	}
+	token := strings.TrimSpace(account.GetCredential("access_token"))
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(payload) > 12288 {
+		return ""
+	}
+	var claims struct {
+		Auth struct {
+			Plan    string `json:"chatgpt_plan_type"`
+			Account string `json:"chatgpt_account_id"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	if selected := strings.TrimSpace(account.GetChatGPTAccountID()); selected != "" &&
+		strings.TrimSpace(claims.Auth.Account) != "" && selected != strings.TrimSpace(claims.Auth.Account) {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(claims.Auth.Plan)) {
+	case "team", "business", "self_serve_business_prolite":
+		return "team"
+	case "free", "plus", "pro":
+		return "personal"
+	default:
+		return ""
+	}
 }
 
 func (s *OpenAIGatewayService) openAICodexTicketGatedModel(model string) bool {
@@ -113,12 +174,9 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 	if !cfg.Enabled || !isOpenAICodexTicketAccount(account) {
 		return nil
 	}
-	models, targetLen := cfg.Models, cfg.TargetLength
+	models := cfg.Models
 	if len(models) == 0 {
 		models = []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel}
-	}
-	if targetLen <= 0 {
-		targetLen = 292
 	}
 	out := make([]OpenAICodexTicketStatus, 0, len(models))
 	for _, model := range models {
@@ -127,6 +185,7 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 			continue
 		}
 		status := OpenAICodexTicketStatus{Model: model}
+		targetLen := openAICodexTicketTargetLength(account, cfg)
 		ticket := parseOpenAICodexTicketFromAny(0, model, nil)
 		if account != nil && account.Extra != nil {
 			ticket = parseOpenAICodexTicketFromAny(account.ID, model, account.Extra[openAICodexTicketExtraKey(model)])
@@ -206,10 +265,7 @@ func (s *OpenAIGatewayService) lookupOpenAICodexTicket(account *Account, model s
 		return nil
 	}
 	key := openAICodexTicketKey(account.ID, model)
-	targetLen := 292
-	if s != nil {
-		targetLen = s.openAICodexTicketConfig().TargetLength
-	}
+	targetLen := openAICodexTicketTargetLength(account, s.openAICodexTicketConfig())
 	now := time.Now()
 	var mem *openAICodexTicket
 	if raw, ok := s.openaiCodexTickets.Load(key); ok {
@@ -298,8 +354,9 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 		return nil
 	}
 	cfg := s.openAICodexTicketConfig()
+	targetLen := openAICodexTicketTargetLength(account, cfg)
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	if ticket.valid(time.Now(), cfg.TargetLength) {
+	if ticket.valid(time.Now(), targetLen) {
 		h.Set(openAICodexTurnStateHeader, ticket.State)
 		return nil
 	}
@@ -354,14 +411,18 @@ func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, 
 		return false
 	}
 	ticket := s.lookupOpenAICodexTicket(account, model)
-	return !ticket.valid(time.Now(), cfg.TargetLength)
+	return !ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
 }
 
 func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, account *Account, token, model, proxyURL string, attemptTimeout time.Duration) (state string, status int, err error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
 	defer cancel()
 
-	body := []byte(`{"model":` + jsonString(model) + `,"store":false,"stream":true,"instructions":"Reply with exactly: pong","input":[{"role":"user","content":[{"type":"input_text","text":"ping"}]}]}`)
+	// Keep the synthetic request aligned with the official Codex Responses
+	// envelope.  These fields are part of the request shape used by the
+	// reference client when it asks for encrypted reasoning content; omitting
+	// them can make the upstream emit a different turn-state shape.
+	body := []byte(`{"model":` + jsonString(model) + `,"store":false,"stream":true,"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"instructions":"Reply with exactly: pong","input":[{"role":"user","content":[{"type":"input_text","text":"ping"}]}]}`)
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, chatgptCodexURL, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, err
@@ -389,13 +450,84 @@ func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, a
 	if resp == nil {
 		return "", 0, errors.New("nil upstream response")
 	}
-	// Only the response header is needed; no connection will be reused.
+	// A successful probe must finish its bounded stream before its state is used.
 	defer func() {
 		if resp.Body != nil {
 			_ = resp.Body.Close()
 		}
 	}()
-	return extractOpenAICodexTurnState(resp.Header), resp.StatusCode, nil
+	if resp.StatusCode != http.StatusOK {
+		return extractOpenAICodexTurnState(resp.Header), resp.StatusCode, nil
+	}
+	if resp.Body == nil {
+		return "", resp.StatusCode, errors.New("empty upstream response body")
+	}
+	limited := &io.LimitedReader{R: resp.Body, N: openAICodexTicketMaxProbeBody + 1}
+	scanner := bufio.NewScanner(limited)
+	scanner.Buffer(make([]byte, 4096), openAICodexTicketMaxProbeBody+1)
+	var event bytes.Buffer
+	for scanner.Scan() {
+		if limited.N <= 0 {
+			return "", resp.StatusCode, errors.New("codex ticket probe response too large")
+		}
+		line := scanner.Text()
+		event.WriteString(line)
+		event.WriteByte('\n')
+		if line == "" {
+			if openAICodexTicketProbeCompleted(event.Bytes()) {
+				return extractOpenAICodexTurnState(resp.Header), resp.StatusCode, nil
+			}
+			event.Reset()
+		}
+	}
+	if limited.N <= 0 {
+		return "", resp.StatusCode, errors.New("codex ticket probe response too large")
+	}
+	if err := scanner.Err(); err != nil {
+		return "", resp.StatusCode, err
+	}
+	return "", resp.StatusCode, errors.New("codex ticket probe stream did not complete")
+}
+
+// openAICodexTicketProbeCompleted accepts only a terminal Responses SSE event.
+// A state header on a truncated or failed stream is not persisted as a ticket.
+func openAICodexTicketProbeCompleted(body []byte) bool {
+	normalized := strings.ReplaceAll(string(body), "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	events := strings.Split(normalized, "\n\n")
+	// SSE dispatches an event only after a blank line. Ignore any unterminated tail.
+	for _, event := range events[:len(events)-1] {
+		eventName := ""
+		var data []string
+		for _, line := range strings.Split(event, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				data = append(data, strings.TrimPrefix(line, "data:"))
+			}
+		}
+		payload := strings.Join(data, "\n")
+		if !gjson.Valid(payload) {
+			continue
+		}
+		message := gjson.Parse(payload)
+		if !message.IsObject() {
+			continue
+		}
+		typeName := message.Get("type").String()
+		if (eventName != "" && eventName != "message" && eventName != "response.completed") ||
+			(typeName != "" && typeName != "response.completed") {
+			continue
+		}
+		if status := message.Get("response.status").String(); status != "" && status != "completed" {
+			continue
+		}
+		if typeName == "response.completed" || eventName == "response.completed" {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonString(v string) string {
@@ -504,7 +636,8 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 				continue
 			}
 			// 已有一张有效且未临近过期的票 → 本周期不打，省得白刷。
-			if t := s.lookupOpenAICodexTicket(&account, model); t.valid(now, cfg.TargetLength) && !t.needsRefresh(now, refreshBefore) {
+			targetLen := openAICodexTicketTargetLength(&account, cfg)
+			if t := s.lookupOpenAICodexTicket(&account, model); t.valid(now, targetLen) && !t.needsRefresh(now, refreshBefore) {
 				continue
 			}
 			acc := account
@@ -525,7 +658,7 @@ func (s *OpenAIGatewayService) refreshOpenAICodexTickets(ctx context.Context) {
 	}
 }
 
-// probeOnceOpenAICodexTicket 走打票代理打一发。命中合格 292（HTTP 200、长度==target、
+// probeOnceOpenAICodexTicket 走打票代理打一发。命中合格门票（HTTP 200、长度符合套餐、
 // gAAAAA 前缀）就落库；否则记 Info miss，交给下个周期重试。同一 key 并发去重，避免上一发还没
 // 回来又叠一发。
 func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, account *Account, model string) {
@@ -533,6 +666,7 @@ func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, a
 		return
 	}
 	cfg := s.openAICodexTicketConfig()
+	targetLen := openAICodexTicketTargetLength(account, cfg)
 	proxyURL := s.openAICodexTicketHarvestProxyURLContext(ctx)
 	if proxyURL == "" || s.httpUpstream == nil || ctx.Err() != nil {
 		return
@@ -553,7 +687,7 @@ func (s *OpenAIGatewayService) probeOnceOpenAICodexTicket(ctx context.Context, a
 				zap.String("reason", "error"), zap.Error(perr))
 			return nil, nil
 		}
-		if status != http.StatusOK || state == "" || len(state) != cfg.TargetLength || !strings.HasPrefix(state, openAICodexTicketStatePrefix) {
+		if status != http.StatusOK || state == "" || len(state) != targetLen || !strings.HasPrefix(state, openAICodexTicketStatePrefix) {
 			logger.L().Info("openai_codex_ticket probe miss",
 				zap.Int64("account_id", account.ID), zap.String("model", model),
 				zap.Int("http", status), zap.Int("len", len(state)))
