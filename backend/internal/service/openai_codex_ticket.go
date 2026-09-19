@@ -471,8 +471,8 @@ func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, a
 			return "", resp.StatusCode, errors.New("codex ticket probe response too large")
 		}
 		line := scanner.Text()
-		event.WriteString(line)
-		event.WriteByte('\n')
+		_, _ = event.WriteString(line)
+		_ = event.WriteByte('\n')
 		if line == "" {
 			if openAICodexTicketProbeCompleted(event.Bytes()) {
 				return extractOpenAICodexTurnState(resp.Header), resp.StatusCode, nil
