@@ -36,10 +36,6 @@ const (
 	openAICodexTicketMaxProbeBody    = 1 << 20
 )
 
-// ErrOpenAICodexTicketUnavailable 表示该号该模型没有符合套餐长度的门票，
-// 且 fail_closed 禁止裸打业务请求。
-var ErrOpenAICodexTicketUnavailable = errors.New("codex turn-state ticket unavailable")
-
 type openAICodexTicket struct {
 	AccountID  int64     `json:"account_id"`
 	Model      string    `json:"model"`
@@ -166,7 +162,7 @@ type OpenAICodexTicketStatus struct {
 	Length           int        `json:"length,omitempty"`
 	Ready            bool       `json:"ready"`
 	RemainingSeconds int64      `json:"remaining_seconds"`
-	Blocked          bool       `json:"blocked"`
+	Blocked          bool       `json:"blocked"` // Kept for API compatibility; tickets never block requests.
 	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
 }
 
@@ -201,7 +197,6 @@ func OpenAICodexTicketStatuses(account *Account, cfg config.OpenAICodexTicketCon
 			exp := ticket.ExpiresAt
 			status.ExpiresAt = &exp
 		}
-		status.Blocked = cfg.FailClosed && !status.Ready
 		out = append(out, status)
 	}
 	return out
@@ -343,8 +338,8 @@ func (s *OpenAIGatewayService) storeOpenAICodexTicket(ctx context.Context, accou
 }
 
 // applyOpenAICodexTicket 在出站请求上覆盖 x-codex-turn-state。
-// 请求路径只注入已捕获的有效门票，不现场打票；无票则返回
-// ErrOpenAICodexTicketUnavailable。打票由后台 harvester 完成。
+// 请求路径只注入已捕获的有效门票，不现场打票；无票、过期或无效时保留原请求继续转发。
+// 打票由后台 harvester 完成，旧配置 fail_closed 不再影响业务请求。
 func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, account *Account, model string, h http.Header) error {
 	if s == nil || h == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabledContext(ctx) {
 		return nil
@@ -360,58 +355,7 @@ func (s *OpenAIGatewayService) applyOpenAICodexTicket(ctx context.Context, accou
 		h.Set(openAICodexTurnStateHeader, ticket.State)
 		return nil
 	}
-	if !cfg.FailClosed {
-		return nil
-	}
-	return ErrOpenAICodexTicketUnavailable
-}
-
-// openAICodexTicketOutboundModel 预测本请求真正出站的模型名，也就是
-// applyOpenAICodexTicket 注入时读到的 body.model。
-//
-// 调度门控与注入必须按同一个模型名判定门票。普通请求下二者同源：Forward 的
-// upstreamModel 与本函数都走 resolveOpenAIAccountUpstreamModelForRequest，且
-// Forward 会把 body.model 改写成该值后才注入。但 /responses/compact 例外——
-// Forward 会把出站模型进一步改写为 compact 映射或 gateway.openai_compact_model
-// （默认非空），此时若门控仍按客户端原始模型判定，就会把「实际出站是非门控
-// 模型、根本不需要票」的 compact 请求整片误拦成不可调度。
-func (s *OpenAIGatewayService) openAICodexTicketOutboundModel(account *Account, requestedModel string, requireCompact bool) string {
-	model := strings.TrimSpace(requestedModel)
-	if account == nil || model == "" {
-		return model
-	}
-	if !account.IsOpenAI() {
-		return canonicalOpenAIAccountSchedulingModel(account, model)
-	}
-	_, upstreamModel := resolveOpenAIForwardMappedModels(account, model, requireCompact)
-	if requireCompact {
-		// 与 Forward 同序：compact 兜底模型优先于普通/compact 映射结果。
-		if compactModel := strings.TrimSpace(s.resolveOpenAICompactFallbackModel(account, model)); compactModel != "" {
-			upstreamModel = compactModel
-		}
-	}
-	if upstreamModel = strings.TrimSpace(upstreamModel); upstreamModel != "" {
-		return upstreamModel
-	}
-	return model
-}
-
-// outboundModel 必须是真正会发给上游的模型名（openAICodexTicketOutboundModel），
-// 不是客户端原始模型：注入侧读的是出站 body.model，两侧口径必须一致。
-func (s *OpenAIGatewayService) openAICodexTicketBlocksAccount(account *Account, outboundModel string) bool {
-	if s == nil || !isOpenAICodexTicketAccount(account) || !s.openAICodexTicketEnabled() {
-		return false
-	}
-	cfg := s.openAICodexTicketConfig()
-	if !cfg.FailClosed {
-		return false
-	}
-	model := normalizeOpenAICodexTicketModel(outboundModel)
-	if !s.openAICodexTicketGatedModel(model) {
-		return false
-	}
-	ticket := s.lookupOpenAICodexTicket(account, model)
-	return !ticket.valid(time.Now(), openAICodexTicketTargetLength(account, cfg))
+	return nil
 }
 
 func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, account *Account, token, model, proxyURL string, attemptTimeout time.Duration) (state string, status int, err error) {
@@ -471,8 +415,6 @@ func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, a
 			return "", resp.StatusCode, errors.New("codex ticket probe response too large")
 		}
 		line := scanner.Text()
-		_, _ = event.WriteString(line)
-		_ = event.WriteByte('\n')
 		// bytes.Buffer writes always return a nil error.
 		_, _ = event.WriteString(line)
 		_ = event.WriteByte('\n')

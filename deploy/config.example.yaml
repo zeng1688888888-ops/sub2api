@@ -320,6 +320,8 @@ gateway:
   #      GATEWAY_OPENAI_CODEX_TICKET_HARVEST_PROXY_URL=socks5h://user:pass@host:port
   # Admin UI 开关（系统设置 → 网关 → Codex 设置 → 292 打票）可覆盖 enabled，无需重启。
   # Off: do not harvest or inject. On: harvest in the background and inject on production requests.
+  # Missing, expired or invalid tickets never block scheduling or forwarding; normal traffic continues.
+  # 打不到票、门票过期或无效时仍按原链路转发，不影响账号调度和正常请求。
   # The harvest proxy should rotate egress IPs itself (fresh CONNECT per request).
   # Credential shadow accounts retain their existing forwarding policy and are not ticket-gated.
   openai_codex_ticket:
@@ -332,7 +334,8 @@ gateway:
     harvest_proxy_url: ""
     harvest_probe_interval_seconds: 6
     harvest_attempt_timeout_seconds: 25
-    fail_closed: true
+    # Deprecated and ignored, including legacy true values. Tickets are always optional.
+    fail_closed: false
     models:
       - gpt-6-astra
       - gpt-5.6-sol

@@ -107,13 +107,13 @@ func TestApplyOpenAICodexTicket_DoesNotReuseOtherModelOrAccount(t *testing.T) {
 	err := svc.applyOpenAICodexTicket(context.Background(), a, "gpt-5.5", h)
 	require.NoError(t, err)
 	require.Equal(t, "keep-ungated", h.Get(openAICodexTurnStateHeader))
-	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-5.5"))
-	require.True(t, svc.openAICodexTicketBlocksAccount(b, "gpt-6-astra"))
-	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-astra"))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(a, "gpt-5.5", false))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(b, "gpt-6-astra", false))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(a, "gpt-6-astra", false))
 
 	h = http.Header{}
 	err = svc.applyOpenAICodexTicket(context.Background(), b, "gpt-6-astra", h)
-	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.NoError(t, err)
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 }
 
@@ -163,7 +163,7 @@ func TestApplyOpenAICodexTicket_ExpiredNotInjected(t *testing.T) {
 	})
 	h := http.Header{}
 	err := svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h)
-	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.NoError(t, err)
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 }
 
@@ -185,7 +185,7 @@ func TestApplyOpenAICodexTicket_WrongLengthNotInjected(t *testing.T) {
 	})
 	h := http.Header{}
 	err := svc.applyOpenAICodexTicket(context.Background(), account, "gpt-6-astra", h)
-	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.NoError(t, err)
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 }
 
@@ -199,7 +199,7 @@ func TestApplyOpenAICodexTicket_FailOpenSkipsInject(t *testing.T) {
 	err := svc.applyOpenAICodexTicket(context.Background(), ticketTestAccount(41), "gpt-6-astra", h)
 	require.NoError(t, err)
 	require.Equal(t, "client-state", h.Get(openAICodexTurnStateHeader))
-	require.False(t, svc.openAICodexTicketBlocksAccount(ticketTestAccount(41), "gpt-6-astra"))
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(ticketTestAccount(41), "gpt-6-astra", false))
 }
 
 func TestOpenAICodexTicket_FailOpenPreservesSchedulingAndForwarding(t *testing.T) {
@@ -220,7 +220,9 @@ func TestOpenAICodexTicket_FailOpenPreservesSchedulingAndForwarding(t *testing.T
 			for _, model := range []string{openAICodexTicketDefaultModel, openAICodexTicketDefaultSolModel} {
 				t.Run(model, func(t *testing.T) {
 					upstream := &httpUpstreamRecorder{err: io.EOF}
-					svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: false}, upstream)
+					// Existing deployments may still set fail_closed=true. It must no longer
+					// make optional tickets a prerequisite for normal account traffic.
+					svc := ticketTestService(t, config.OpenAICodexTicketConfig{Enabled: true, FailClosed: true}, upstream)
 					account := ticketTestAccount(41)
 					if tc.ticket != nil {
 						account.Extra = map[string]any{openAICodexTicketExtraKey(model): tc.ticket}
@@ -288,10 +290,11 @@ func TestOpenAICodexTicket_FailOpenAfterFailedProbe(t *testing.T) {
 			headers := http.Header{}
 			headers.Set(openAICodexTurnStateHeader, tc.state)
 			upstream := &httpUpstreamRecorder{err: tc.err, resp: &http.Response{
-				StatusCode: tc.status, Header: headers, Body: io.NopCloser(strings.NewReader("")),
+				StatusCode: tc.status, Header: headers,
+				Body: io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\"}\n\n")),
 			}}
 			svc := ticketTestService(t, config.OpenAICodexTicketConfig{
-				Enabled: true, FailClosed: false, HarvestProxyURL: "http://proxy.example.com:8080",
+				Enabled: true, FailClosed: true, HarvestProxyURL: "http://proxy.example.com:8080",
 			}, upstream)
 			account := ticketTestAccount(41)
 			account.Status = StatusActive
@@ -535,7 +538,7 @@ func TestOpenAICodexTicketStatuses_RespectRuntimeConfiguration(t *testing.T) {
 	require.Equal(t, "custom-model", status[0].Model)
 	require.False(t, status[0].Blocked)
 	cfg.FailClosed = true
-	require.True(t, OpenAICodexTicketStatuses(account, cfg, time.Now())[0].Blocked)
+	require.False(t, OpenAICodexTicketStatuses(account, cfg, time.Now())[0].Blocked)
 }
 func TestProbeOpenAICodexTicket_RejectsInvalidState(t *testing.T) {
 	for _, state := range []string{fakeCodexTicketState(312), strings.Repeat("X", 292), ""} {
@@ -643,7 +646,7 @@ func TestOpenAICodexTicketBusinessProliteAccepts332Rejects292(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, state, h.Get(openAICodexTurnStateHeader))
 			} else {
-				require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+				require.NoError(t, err)
 				require.Empty(t, h.Get(openAICodexTurnStateHeader))
 			}
 		})
@@ -676,7 +679,7 @@ func TestOpenAICodexTicketTeamRejectsPersonal292(t *testing.T) {
 	})
 	h := http.Header{}
 	err := svc.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, h)
-	require.ErrorIs(t, err, ErrOpenAICodexTicketUnavailable)
+	require.NoError(t, err)
 	require.Empty(t, h.Get(openAICodexTurnStateHeader))
 }
 
@@ -725,7 +728,7 @@ func TestHarvestOpenAICodexTicket332PersistsAndRestoresByPlan(t *testing.T) {
 			require.Len(t, statuses, 1)
 			require.True(t, statuses[0].Ready)
 			require.False(t, statuses[0].Blocked)
-			require.False(t, restored.openAICodexTicketBlocksAccount(account, openAICodexTicketDefaultModel))
+			require.False(t, restored.isOpenAIAccountRequestRuntimeBlocked(account, openAICodexTicketDefaultModel, false))
 			out := http.Header{}
 			require.NoError(t, restored.applyOpenAICodexTicket(context.Background(), account, openAICodexTicketDefaultModel, out))
 			require.Equal(t, state, out.Get(openAICodexTurnStateHeader))
@@ -735,10 +738,8 @@ func TestHarvestOpenAICodexTicket332PersistsAndRestoresByPlan(t *testing.T) {
 	}
 }
 
-// /responses/compact 的出站模型被 Forward 改写为 gateway.openai_compact_model
-// （默认非空），门票门控必须按该出站模型判定。否则对门控模型发 compact 请求时，
-// 所有无票账号都会被 fail_closed 误判为不可调度，而这些请求实际不需要票。
-func TestOpenAICodexTicketGate_CompactRequestUsesForwardOutboundModel(t *testing.T) {
+// Missing tickets must not affect scheduling even when compact rewrites the model.
+func TestOpenAICodexTicket_MissingTicketAllowsRegularAndCompactRequests(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
 		OpenAICompactModel: "gpt-5.5",
 		OpenAICodexTicket: config.OpenAICodexTicketConfig{
@@ -751,16 +752,6 @@ func TestOpenAICodexTicketGate_CompactRequestUsesForwardOutboundModel(t *testing
 	}}}
 	account := ticketTestAccount(41) // 无票
 
-	// 出站模型预测必须与 Forward 的解析链一致。
-	require.Equal(t, "gpt-6-astra", svc.openAICodexTicketOutboundModel(account, "gpt-6-astra", false))
-	require.Equal(t, "gpt-5.5", svc.openAICodexTicketOutboundModel(account, "gpt-6-astra", true))
-
-	// 普通请求：出站仍是门控模型且无票 → fail_closed 必须拦号。
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false))
-
-	// compact 请求：出站已被改写成非门控的 gpt-5.5 → 不得拦号。
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false))
 	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", true))
-
-	// 回归锚点：按客户端原始模型判定（旧实现的口径）在 compact 下必然误拦。
-	require.True(t, svc.openAICodexTicketBlocksAccount(account, canonicalOpenAIAccountSchedulingModel(account, "gpt-6-astra")))
 }
