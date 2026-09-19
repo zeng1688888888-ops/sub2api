@@ -473,6 +473,9 @@ func (s *OpenAIGatewayService) fireOpenAICodexTicketProbe(ctx context.Context, a
 		line := scanner.Text()
 		_, _ = event.WriteString(line)
 		_ = event.WriteByte('\n')
+		// bytes.Buffer writes always return a nil error.
+		_, _ = event.WriteString(line)
+		_ = event.WriteByte('\n')
 		if line == "" {
 			if openAICodexTicketProbeCompleted(event.Bytes()) {
 				return extractOpenAICodexTurnState(resp.Header), resp.StatusCode, nil
