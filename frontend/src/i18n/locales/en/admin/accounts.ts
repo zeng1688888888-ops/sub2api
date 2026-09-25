@@ -618,6 +618,9 @@ export default {
         apiKeyHint: 'Your OpenAI API Key',
         excelBPS: 'Excel / BPS protocol',
         excelBPSDesc: 'Forward Responses through Excel using this account’s existing ChatGPT OAuth credentials. Disable to restore Codex routing.',
+        excelBPSAllModels: 'Enable for all models',
+        excelBPSModels: 'Select Excel / BPS models',
+        excelBPSCacheCreationAsInput: 'Bill cache creation as regular input',
         excelBPSNotice: 'Selected sessions use HTTP/SSE through Excel / BPS.',
         oauthPassthrough: 'Auto passthrough (auth only)',
         oauthPassthroughDesc:

@@ -736,6 +736,9 @@ export default {
         apiKeyHint: '您的 OpenAI API Key',
         excelBPS: 'Excel / BPS 协议',
         excelBPSDesc: '使用本账号已有的 ChatGPT OAuth 凭据，经 Excel 接口转发 Responses 请求；关闭后恢复 Codex 路径。',
+        excelBPSAllModels: '对所有模型启用（兼容原设置）',
+        excelBPSModels: '选择使用 Excel / BPS 的模型',
+        excelBPSCacheCreationAsInput: '创建缓存按普通输入计费',
         excelBPSNotice: '开启后新会话使用 Excel / BPS 的 HTTP/SSE 路径。',
         oauthPassthrough: '自动透传（仅替换认证）',
         oauthPassthroughDesc:

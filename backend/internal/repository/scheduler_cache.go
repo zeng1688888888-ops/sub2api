@@ -1020,6 +1020,8 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		// model_not_supported —— 转发阶段却仍按透传工作，表现为"单独测账号能通、
 		// 走网关报 no available accounts"。
 		"openai_passthrough",
+		"openai_excel_bps",
+		"openai_excel_bps_models",
 		"openai_oauth_passthrough",
 		"codex_fingerprint_mode",
 		"codex_fingerprint_seed",
