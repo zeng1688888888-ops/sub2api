@@ -1232,7 +1232,7 @@ type OpenAICodexTicketConfig struct {
 	HarvestProxyURL              string   `mapstructure:"harvest_proxy_url"`
 	HarvestProbeIntervalSeconds  int      `mapstructure:"harvest_probe_interval_seconds"`
 	HarvestAttemptTimeoutSeconds int      `mapstructure:"harvest_attempt_timeout_seconds"`
-	FailClosed                   bool     `mapstructure:"fail_closed"` // Deprecated: accepted for compatibility but ignored; tickets never block traffic.
+	FailClosed                   bool     `mapstructure:"fail_closed"`
 	Models                       []string `mapstructure:"models"`
 }
 
