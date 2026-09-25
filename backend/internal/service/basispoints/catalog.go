@@ -11,13 +11,14 @@ import (
 func describeCatalog(catalog []any) string {
 	var lines []string
 	for _, raw := range catalog {
-		entry := raw.(object)
+		// collectTools constructs every catalog entry as an object.
+		entry, _ := raw.(object)
 		line := "Client tool " + quoted(entry["name"]) + " (" + text(entry["type"]) + ")."
 		if description := text(entry["description"]); description != "" {
 			line += " " + description
 		}
 		if text(entry["type"]) == "custom" {
-			line += " Pass its exact raw text in the envelope's input field."
+			line += " Set run_officejs summary to " + quoted("codex2api.custom/"+text(entry["name"])) + " and pass its exact raw text directly in code."
 			if format := entry["format"]; format != nil {
 				line += " Input format: " + quoted(format) + "."
 			}
