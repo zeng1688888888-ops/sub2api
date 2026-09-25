@@ -49,6 +49,29 @@ func TestAccount_IsOpenAIPassthroughEnabled(t *testing.T) {
 	})
 }
 
+func TestAccount_IsExcelBPSEnabled(t *testing.T) {
+	tests := []struct {
+		name    string
+		account *Account
+		want    bool
+	}{
+		{"OAuth enabled", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}, true},
+		{"API key rejected", &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Extra: map[string]any{"openai_excel_bps": true}}, false},
+		{"shadow rejected", func() *Account {
+			parent := int64(1)
+			return &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, ParentAccountID: &parent, Extra: map[string]any{"openai_excel_bps": true}}
+		}(), false},
+		{"disabled", &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": false}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { require.Equal(t, tt.want, tt.account.IsExcelBPSEnabled()) })
+	}
+}
+
+func TestAccount_ExcelBPSForcesHTTP(t *testing.T) {
+	account := &Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}
+	require.True(t, account.IsOpenAIWSForceHTTPEnabled())
+}
 func TestAccount_IsOpenAIOAuthPassthroughEnabled(t *testing.T) {
 	t.Run("仅OAuth类型允许返回开启", func(t *testing.T) {
 		oauthAccount := &Account{
