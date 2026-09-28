@@ -31,7 +31,8 @@ func TestExcelBPSImageAdmissionCoversGatewayAliasesBeforeBodyRead(t *testing.T) 
 	settings := service.NewSettingService(&bpsImageAdmissionRouteRepo{}, cfg)
 	r := gin.New()
 	RegisterGatewayRoutes(r, &handler.Handlers{OpenAIGateway: &handler.OpenAIGatewayHandler{}, Gateway: &handler.GatewayHandler{}}, func(c *gin.Context) {
-		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+		groupID := int64(1)
+		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{GroupID: &groupID, Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI}})
 		c.Next()
 	}, nil, nil, nil, settings, nil, cfg)
 	for _, path := range []string{"/responses", "/responses/compact", "/v1/responses", "/v1/responses/compact", "/backend-api/codex/responses", "/backend-api/codex/responses/compact", "/v1/chat/completions", "/chat/completions", "/v1/messages"} {
@@ -41,7 +42,7 @@ func TestExcelBPSImageAdmissionCoversGatewayAliasesBeforeBodyRead(t *testing.T) 
 		req.ContentLength = 65 << 20
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
-		require.Equal(t, http.StatusRequestEntityTooLarge, w.Code, path)
+		require.Equal(t, http.StatusRequestEntityTooLarge, w.Code, "%s: %s", path, w.Body.String())
 		require.Contains(t, w.Body.String(), "basispoints_image_body_too_large", path)
 		require.False(t, body.read, path)
 	}
