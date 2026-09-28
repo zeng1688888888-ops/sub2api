@@ -1,5 +1,5 @@
 <template>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-col items-start gap-2">
     <!-- Rate Limit Display (429) - Two-line layout -->
     <div v-if="isRateLimited" class="flex flex-col items-center gap-1">
       <span class="badge text-xs badge-warning">{{ t('admin.accounts.status.rateLimited') }}</span>
@@ -31,6 +31,8 @@
         {{ statusText }}
       </span>
     </template>
+
+    <AccountIntelligenceIndicator :account="account" @updated="emit('intelligence-updated', { ...account, openai_codex_state_probe: $event })" />
 
     <!-- Error Info Indicator -->
     <div v-if="hasError && account.error_message" class="group/error relative">
@@ -162,6 +164,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
+import AccountIntelligenceIndicator from './AccountIntelligenceIndicator.vue'
 import type { Account } from '@/types'
 import { formatCountdown, formatDateTime, formatDateTimeToMinute, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
@@ -173,6 +176,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'show-temp-unsched', account: Account): void
+  (e: 'intelligence-updated', account: Account): void
 }>()
 
 // Computed: is rate limited (429)

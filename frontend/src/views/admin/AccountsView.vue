@@ -288,7 +288,7 @@
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
-              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" />
+              <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" @intelligence-updated="handleAccountUpdated" />
             </div>
           </template>
           <template #cell-schedulable="{ row }">
@@ -454,9 +454,10 @@
     <EditAccountModal :show="showEdit" :account="edAcc" :proxies="proxies" :groups="groups" @close="showEdit = false" @updated="handleAccountUpdated" />
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
+    <AccountIntelligenceTestModal :show="showIntelligenceTest" :account="intelligenceTestingAcc" @close="showIntelligenceTest = false; intelligenceTestingAcc = null" @updated="handleAccountUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
-    <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
+    <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @intelligence-test="handleIntelligenceTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
     <BulkEditAccountModal
@@ -511,6 +512,7 @@ import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
+import AccountIntelligenceTestModal from '@/components/admin/account/AccountIntelligenceTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -609,6 +611,8 @@ const deletingAcc = ref<Account | null>(null)
 const creatingShadowAcc = ref<Account | null>(null)
 const reAuthAcc = ref<Account | null>(null)
 const testingAcc = ref<Account | null>(null)
+const intelligenceTestingAcc = ref<Account | null>(null)
+const showIntelligenceTest = ref(false)
 const statsAcc = ref<Account | null>(null)
 const showSchedulePanel = ref(false)
 const scheduleAcc = ref<Account | null>(null)
@@ -1366,6 +1370,7 @@ const isAnyModalOpen = computed(() => {
     showDeleteDialog.value ||
     showReAuth.value ||
     showTest.value ||
+    showIntelligenceTest.value ||
     showStats.value ||
     showSchedulePanel.value ||
     showErrorPassthrough.value ||
@@ -1393,6 +1398,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     current.rate_limit_reset_at !== next.rate_limit_reset_at ||
     current.overload_until !== next.overload_until ||
     current.temp_unschedulable_until !== next.temp_unschedulable_until ||
+    current.openai_codex_state_probe?.last_probe_at !== next.openai_codex_state_probe?.last_probe_at ||
     buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next) ||
     buildGrokUsageRefreshKey(current) !== buildGrokUsageRefreshKey(next)
   )
@@ -2315,6 +2321,13 @@ const handleTest = async (a: AccountListItem) => {
   if (!account) return
   testingAcc.value = account
   showTest.value = true
+}
+
+const handleIntelligenceTest = async (a: AccountListItem) => {
+  const account = await loadAccountDetails(a)
+  if (!account) return
+  intelligenceTestingAcc.value = account
+  showIntelligenceTest.value = true
 }
 const handleViewStats = async (a: AccountListItem) => {
   const account = await loadAccountDetails(a)

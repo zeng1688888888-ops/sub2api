@@ -420,6 +420,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OllamaCloudUsageSnapshotExtraKey)
 	delete(accountExtra, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(accountExtra, OpenCodeGoUsageSnapshotExtraKey)
+	delete(accountExtra, OpenAICodexStateProbeSnapshotExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
 	account := &Account{
 		Name:        input.Name,
@@ -679,6 +680,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OllamaCloudUsageSnapshotExtraKey)
 		delete(normalizedExtra, OpenCodeGoUsageAutoRefreshExtraKey)
 		delete(normalizedExtra, OpenCodeGoUsageSnapshotExtraKey)
+		delete(normalizedExtra, OpenAICodexStateProbeSnapshotExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -696,6 +698,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenAIAutoResetCreditStateExtraKey,
 			OpenCodeGoUsageAutoRefreshExtraKey,
 			OpenCodeGoUsageSnapshotExtraKey,
+			OpenAICodexStateProbeSnapshotExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -763,6 +766,14 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			account.ProxyID = input.ProxyID
 		}
 		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
+	}
+	if account.Extra != nil && !account.IsOpenAIOAuthLike() {
+		delete(account.Extra, OpenAICodexStateProbeSnapshotExtraKey)
+	}
+	if snapshot := OpenAICodexStateProbeSnapshotFromExtra(account.Extra); snapshot != nil &&
+		(snapshot.Route != openAIIntelligenceProbeRoute(account, snapshot.Model) ||
+			!reflect.DeepEqual(previousProbeIdentity, upstreamBillingProbeIdentity(account))) {
+		delete(account.Extra, OpenAICodexStateProbeSnapshotExtraKey)
 	}
 	if !reflect.DeepEqual(previousProbeIdentity, upstreamBillingProbeIdentity(account)) && account.Extra != nil {
 		delete(account.Extra, UpstreamBillingProbeExtraKey)
@@ -930,6 +941,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OllamaCloudUsageSnapshotExtraKey)
 	delete(updates, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(updates, OpenCodeGoUsageSnapshotExtraKey)
+	delete(updates, OpenAICodexStateProbeSnapshotExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
@@ -959,6 +971,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OllamaCloudUsageSnapshotExtraKey)
 	delete(input.Extra, OpenCodeGoUsageAutoRefreshExtraKey)
 	delete(input.Extra, OpenCodeGoUsageSnapshotExtraKey)
+	delete(input.Extra, OpenAICodexStateProbeSnapshotExtraKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)

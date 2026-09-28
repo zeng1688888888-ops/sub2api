@@ -1195,6 +1195,33 @@ export interface OpenCodeGoUsageSettings {
   debounce_minutes: number
 }
 
+export type OpenAICodexStateProbeVerdict = 'healthy' | 'degraded' | 'inconclusive'
+
+export interface OpenAICodexStateProbeSnapshot {
+  method?: 'candy'
+  route?: 'codex' | 'bps'
+  answer?: string
+  status?: string
+  verdict?: OpenAICodexStateProbeVerdict
+  model?: string
+  reported_model?: string
+  health_rate?: number
+  healthy_count?: number
+  degraded_count?: number
+  sample_count?: number
+  consecutive_healthy?: number
+  consecutive_degraded?: number
+  last_probe_at?: string
+  next_probe_at?: string
+  failure?: string
+  reason?: string
+  detail?: string
+  ticket_length?: number
+  continue_ticket_length?: number
+  new_ticket?: boolean
+  history?: Array<'healthy' | 'degraded'>
+}
+
 export interface Account {
   id: number
   name: string
@@ -1208,6 +1235,7 @@ export interface Account {
   credentials?: Record<string, unknown>
   credentials_status?: Record<string, boolean>
   ollama_cloud_usage?: OllamaCloudUsageState
+  openai_codex_state_probe?: OpenAICodexStateProbeSnapshot
   opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
   extra?: (CodexUsageSnapshot & OpenAICompactState & {

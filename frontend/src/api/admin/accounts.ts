@@ -1055,6 +1055,45 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
   return data.results
 }
 
+export type OpenAICodexStateVerdict = 'healthy' | 'degraded' | 'inconclusive'
+
+export interface OpenAICodexStateProbeResult {
+  method?: 'candy'
+  route?: 'codex' | 'bps'
+  answer?: string
+  snapshot?: import('@/types').OpenAICodexStateProbeSnapshot
+  account_id: number
+  model: string
+  verdict: OpenAICodexStateVerdict
+  reason: string
+  failure?: string
+  detail?: string
+  mint_status: number
+  continue_status: number
+  minted: boolean
+  new_ticket: boolean
+  ticket_length: number
+  continue_ticket_length: number
+  reported_model?: string
+  latency_ms: number
+  started_at: string
+  finished_at: string
+}
+
+/** Grade the same reasoning question through the account's current Codex/BPS route. */
+export async function probeOpenAIAccountIntelligence(
+  id: number,
+  modelId?: string,
+  options?: { signal?: AbortSignal }
+): Promise<OpenAICodexStateProbeResult> {
+  const { data } = await apiClient.post<OpenAICodexStateProbeResult>(
+    `/admin/accounts/${id}/intelligence-probe`,
+    { model_id: modelId?.trim() || undefined },
+    { timeout: 120_000, signal: options?.signal }
+  )
+  return data
+}
+
 export async function getOllamaCloudUsageSettings(): Promise<OllamaCloudUsageSettings> {
   const { data } = await apiClient.get<OllamaCloudUsageSettings>('/admin/accounts/ollama-cloud-usage/settings')
   return data

@@ -1315,6 +1315,32 @@ func (h *AccountHandler) Test(c *gin.Context) {
 	}
 }
 
+type IntelligenceProbeRequest struct {
+	ModelID string `json:"model_id"`
+}
+
+// IntelligenceProbe tests an actual answer through the configured Codex/BPS route.
+func (h *AccountHandler) IntelligenceProbe(c *gin.Context) {
+	accountID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid account ID")
+		return
+	}
+	var req IntelligenceProbeRequest
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, "Invalid request: "+err.Error())
+			return
+		}
+	}
+	result, err := h.accountTestService.ProbeOpenAIAccountIntelligence(c.Request.Context(), accountID, req.ModelID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 // RecoverState handles unified recovery of recoverable account runtime state.
 // POST /api/v1/admin/accounts/:id/recover-state
 func (h *AccountHandler) RecoverState(c *gin.Context) {

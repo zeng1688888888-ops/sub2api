@@ -338,6 +338,7 @@ func (s *UpstreamBillingProbeService) Stop() {
 func (s *UpstreamBillingProbeService) runLoop() {
 	defer s.wg.Done()
 	_ = s.RunDue(s.parentCtx)
+	_ = s.RunOpenAICodexStateProbeDue(s.parentCtx)
 	ticker := time.NewTicker(upstreamBillingProbeCycleInterval)
 	defer ticker.Stop()
 	for {
@@ -347,6 +348,9 @@ func (s *UpstreamBillingProbeService) runLoop() {
 		case <-ticker.C:
 			if err := s.RunDue(s.parentCtx); err != nil {
 				logger.LegacyPrintf("service.upstream_billing_probe", "run_due_failed: err=%v", err)
+			}
+			if err := s.RunOpenAICodexStateProbeDue(s.parentCtx); err != nil {
+				logger.LegacyPrintf("service.openai_codex_state_probe", "run_due_failed: err=%v", err)
 			}
 		}
 	}
