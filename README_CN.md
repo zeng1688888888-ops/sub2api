@@ -334,7 +334,7 @@ curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/install
 mkdir -p sub2api-deploy && cd sub2api-deploy
 
 # 下载并运行部署准备脚本
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/zeng1688888888-ops/sub2api/main/deploy/docker-deploy.sh | bash
 
 # 启动服务
 docker compose up -d
@@ -352,11 +352,13 @@ docker compose logs -f sub2api
 
 #### 手动部署
 
+本分支默认使用 `ghcr.io/zeng1688888888-ops/sub2api:latest`，包含 BPS 和智力检测功能。可在 `.env` 中设置 `SUB2API_IMAGE=ghcr.io/zeng1688888888-ops/sub2api:0.2.13` 固定到已发布版本。已有部署请参阅[切换步骤](docs/account-intelligence-tests.md#docker-部署与已有实例切换)，保留原有数据和密钥。
+
 如果你希望手动配置：
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/zeng1688888888-ops/sub2api.git
 cd sub2api/deploy
 
 # 2. 复制环境配置文件

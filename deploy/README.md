@@ -50,16 +50,29 @@ See [APPLE_CONTAINER.md](./APPLE_CONTAINER.md) for configuration, upgrades, pers
 
 ## Docker Deployment (Recommended)
 
+### Fork Image Selection
+
+The Docker Compose files use `ghcr.io/zeng1688888888-ops/sub2api:latest`
+by default. This fork's image includes the BPS and account intelligence features;
+the upstream `weishaw/sub2api` image does not contain these fork additions.
+Set `SUB2API_IMAGE` in `.env` to a published tag, such as
+`ghcr.io/zeng1688888888-ops/sub2api:0.2.13`, to pin a version.
+
+For an existing deployment, follow the [migration instructions](../docs/account-intelligence-tests.md#docker-部署与已有实例切换).
+Keep the existing Compose file, database, data mounts, and `.env` secrets.
+Changing an image reference does not require a new Git tag when that image
+is already published. Recreate the application container to apply the change.
+
 ### Method 1: One-Click Deployment (Recommended)
 
 Use the automated preparation script for the easiest setup:
 
 ```bash
 # Download and run the preparation script
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh | bash
+curl -sSL https://raw.githubusercontent.com/zeng1688888888-ops/sub2api/main/deploy/docker-deploy.sh | bash
 
 # Or download first, then run
-curl -sSL https://raw.githubusercontent.com/Wei-Shaw/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
+curl -sSL https://raw.githubusercontent.com/zeng1688888888-ops/sub2api/main/deploy/docker-deploy.sh -o docker-deploy.sh
 chmod +x docker-deploy.sh
 ./docker-deploy.sh
 ```
@@ -74,13 +87,13 @@ chmod +x docker-deploy.sh
 **After running the script:**
 ```bash
 # Start services
-docker compose -f docker-compose.local.yml up -d
+docker compose up -d
 
 # View logs
-docker compose -f docker-compose.local.yml logs -f sub2api
+docker compose logs -f sub2api
 
 # If admin password was auto-generated, find it in logs:
-docker compose -f docker-compose.local.yml logs sub2api | grep "admin password"
+docker compose logs sub2api | grep "admin password"
 
 # Access Web UI
 # http://localhost:8080
@@ -92,7 +105,7 @@ If you prefer manual control:
 
 ```bash
 # Clone repository
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/zeng1688888888-ops/sub2api.git
 cd sub2api/deploy
 
 # Configure environment
@@ -253,6 +266,7 @@ docker compose down -v
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `SUB2API_IMAGE` | No | `ghcr.io/zeng1688888888-ops/sub2api:latest` | Docker Compose application image; set a published version tag to pin a release. |
 | `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
 | `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |

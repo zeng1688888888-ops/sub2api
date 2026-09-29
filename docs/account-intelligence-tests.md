@@ -33,3 +33,40 @@
 回归同时补齐 /v1 路由组的 BPS 图片入站限制，使其与 /responses 和 /backend-api/codex 等别名使用相同检查，在读取超限请求体前返回错误。
 
 部署时需一起更新前端和后端；沿用本仓库现有 Dockerfile 和 Compose 配置。无需使用原测试环境的 probe-test 镜像标签，也无需拷贝原环境的 .env、数据库或本地插件目录。
+
+## Docker 部署与已有实例切换
+
+本仓库的 Docker Compose 默认拉取 `ghcr.io/zeng1688888888-ops/sub2api:latest`。
+`0.2.13` 已包含本功能；改用这个已发布镜像不需要新建 Git tag，也不需要重新编译。
+仅拉取 Git 代码不会更新运行中的容器。
+
+如果已有服务器仍使用 `weishaw/sub2api`，在**原部署目录、原 Compose 文件**中，
+只把 `sub2api` 服务的 `image` 改为：
+
+```yaml
+image: ${SUB2API_IMAGE:-ghcr.io/zeng1688888888-ops/sub2api:latest}
+```
+
+在原 `.env` 中新增或修改以下一行，固定到已发布的检测版本：
+
+```dotenv
+SUB2API_IMAGE=ghcr.io/zeng1688888888-ops/sub2api:0.2.13
+```
+
+保留其他配置、密钥、端口和数据挂载，不要重新运行初始化脚本或覆盖 `.env`。
+在同一部署目录执行：
+
+```bash
+docker compose config --images
+docker compose pull sub2api
+docker compose up -d --no-deps --force-recreate sub2api
+docker compose ps sub2api
+```
+
+第一条命令显示的应用镜像应属于 `ghcr.io/zeng1688888888-ops/sub2api`。
+如果原先用 `-f docker-compose.local.yml` 或其他 `-f`、`-p`、`--env-file` 参数启动，
+以上命令必须沿用原参数，避免切换部署目录、项目名或数据卷。
+
+容器启动后刷新账号管理页面，在 OpenAI OAuth / setup-token 账号的操作菜单中查看“智力测试”。
+`v0.2.13` 的后台在线更新功能仍指向原作者 Release；本分支的 Docker 部署请通过上述
+镜像拉取和容器重建流程更新，不要使用后台在线更新切换二进制。
