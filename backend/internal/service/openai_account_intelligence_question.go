@@ -64,10 +64,10 @@ func (s *AccountTestService) runOpenAIIntelligenceQuestion(ctx context.Context, 
 		return nil, err
 	}
 	if recorder.overflow {
-		return nil, errors.New("Intelligence response exceeds 4 MiB capture limit")
+		return nil, errors.New("intelligence response exceeds 4 MiB capture limit")
 	}
 	if forwarded == nil || forwarded.ClientDisconnect || ctx.Err() != nil {
-		return nil, errors.New("Intelligence response was interrupted")
+		return nil, errors.New("intelligence response was interrupted")
 	}
 
 	var answer, completedAnswer strings.Builder
@@ -75,11 +75,11 @@ func (s *AccountTestService) runOpenAIIntelligenceQuestion(ctx context.Context, 
 	for _, payload := range openAICodexStateStreamEvents(recorder.Body.Bytes()) {
 		switch gjson.GetBytes(payload, "type").String() {
 		case "response.output_text.delta":
-			answer.WriteString(gjson.GetBytes(payload, "delta").String())
+			_, _ = answer.WriteString(gjson.GetBytes(payload, "delta").String())
 		case "response.completed", "response.done":
 			status := gjson.GetBytes(payload, "response.status").String()
 			if status != "" && status != "completed" {
-				return nil, errors.New("Intelligence response did not complete successfully")
+				return nil, errors.New("intelligence response did not complete successfully")
 			}
 			completed = true
 			completedAnswer.Reset()
@@ -89,23 +89,23 @@ func (s *AccountTestService) runOpenAIIntelligenceQuestion(ctx context.Context, 
 				}
 				for _, content := range item.Get("content").Array() {
 					if content.Get("type").String() == "output_text" {
-						completedAnswer.WriteString(content.Get("text").String())
+						_, _ = completedAnswer.WriteString(content.Get("text").String())
 					}
 				}
 			}
 		case "response.failed", "response.incomplete", "error":
-			return nil, errors.New("Intelligence response failed before completion")
+			return nil, errors.New("intelligence response failed before completion")
 		}
 	}
 	if !completed {
-		return nil, errors.New("Intelligence response ended before completion")
+		return nil, errors.New("intelligence response ended before completion")
 	}
 	output := answer.String()
 	if completedAnswer.Len() > 0 {
 		output = completedAnswer.String()
 	}
 	if strings.TrimSpace(output) == "" {
-		return nil, errors.New("Intelligence response returned empty output")
+		return nil, errors.New("intelligence response returned empty output")
 	}
 	result := &openAIIntelligenceSample{Status: "success", ResponseText: output}
 	if !CandyAnswerCorrect(output) {
