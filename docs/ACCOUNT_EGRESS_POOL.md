@@ -45,3 +45,14 @@
 ## 验证
 
 自动化测试覆盖原子容量限制、不同账号隔离、负载比例分配、释放及过期恢复、无代理回退、配置校验、嵌套调用、Codex/BPS/WebSocket 桥接转发、备份重映射和前端配置/容量展示。界面预览中的 13/100 和 5/5、4/5、4/5 为演示数据，不是上游压测结果。
+
+## Windows 本机真实网络链路测试
+
+提供可选测试标签 `egress_local`，使用真实 Redis（仅接受 127.0.0.1:16379，使用 DB 1）和本地模拟 HTTP 上游/代理，不需要真实上游凭据，也不依赖管理控制台授权。
+
+1. 准备本地 Redis 监听 16379。
+2. 在仓库根目录启动 `node backend/scripts/local-egress/mock-network.mjs`。
+3. 在另一个 PowerShell 中进入 backend，设置 `$env:EGRESS_TEST_REDIS_ADDR='127.0.0.1:16379'`。
+4. 执行 `go test -tags egress_local ./internal/repository -run '^TestLocalAccountEgress$' -count=1 -v`。
+
+可设置 `EGRESS_TEST_REPORT_DIR` 将 JSON 报告保存到指定目录。覆盖单请求、100 请求争抢 15 个出口名额、账号总上限 7、以及 70+70+60 三出口的 200 请求并发。该测试直接调用网关服务并通过真实 HTTP 代理发送请求，不等同于完整 HTTP 入站鉴权与真实外部上游压测。
