@@ -20,6 +20,12 @@ import (
 
 // Forward forwards request to OpenAI API
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
+	ctx, account, releaseEgress, egressErr := s.beginAccountEgress(ctx, account)
+	if egressErr != nil {
+		return nil, egressErr
+	}
+	defer releaseEgress()
+
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {

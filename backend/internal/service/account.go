@@ -2398,7 +2398,7 @@ func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) stri
 // 字段：accounts.extra.openai_ws_force_http。
 func (a *Account) IsOpenAIWSForceHTTPEnabled() bool {
 
-	if a.IsExcelBPSEnabled() {
+	if a.HasEgressPool() || a.IsExcelBPSEnabled() {
 		return true
 	}
 	if a == nil || !a.IsOpenAI() || a.Extra == nil {

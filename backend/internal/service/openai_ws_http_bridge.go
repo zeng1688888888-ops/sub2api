@@ -431,6 +431,12 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	turn int,
 	writeClientMessage func([]byte) error,
 ) (*OpenAIForwardResult, error) {
+	ctx, account, releaseEgress, egressErr := s.beginAccountEgress(ctx, account)
+	if egressErr != nil {
+		return nil, egressErr
+	}
+	defer releaseEgress()
+
 	if s == nil {
 		return nil, errors.New("service is nil")
 	}

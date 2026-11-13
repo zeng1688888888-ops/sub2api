@@ -1,5 +1,19 @@
 export default {
     accounts: {
+      egressPool: {
+  "title": "多出口并发",
+  "hint": "同一账号通过多个代理分配请求，每个出口独立限制并发；已满、停用或过期的出口不会接收新请求。",
+  "exit": "出口 {index}",
+  "laneConcurrency": "出口 {index} 并发",
+  "selectProxy": "选择代理",
+  "unavailable": "不可用",
+  "remove": "移除出口",
+  "add": "添加出口",
+  "capacity": "配置可用并发上限：{count}",
+  "defaultProxyHint": "普通代理继续用于登录和维护。生成请求使用上述出口；WebSocket 请求通过 HTTP 桥接按轮次分配出口。",
+  "invalid": "请选择不重复的代理，每个出口并发须为 1–2000 的整数，最多 32 个出口。",
+  "laneTooltip": "{name}：{current} / {max}"
+},
       title: '账号管理',
       description: '管理 AI 平台账号和 Cookie',
       createAccount: '添加账号',

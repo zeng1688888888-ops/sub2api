@@ -1926,6 +1926,11 @@
         <ProxySelector v-model="form.proxy_id" :proxies="proxies" />
       </div>
 
+      <AccountEgressPoolEditor
+        v-if="account.platform === 'openai' && !isSparkShadow"
+        v-model="egressPool" :proxies="proxies" :account-concurrency="form.concurrency"
+      />
+
       <UpstreamRequestIdHeaderField
         v-model="upstreamRequestIdHeader"
         :platform="account.platform"
@@ -3459,6 +3464,8 @@ import {
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ProxySelector from '@/components/common/ProxySelector.vue'
+import AccountEgressPoolEditor from '@/components/account/AccountEgressPoolEditor.vue'
+import type { AccountEgressLane } from '@/types'
 import ProxyAdBanner from '@/components/common/ProxyAdBanner.vue'
 import GroupSelector from '@/components/common/GroupSelector.vue'
 import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.vue'
@@ -3691,6 +3698,7 @@ interface TempUnschedRuleForm {
 }
 
 // State
+const egressPool = ref<AccountEgressLane[]>([])
 const submitting = ref(false)
 const editBaseUrl = ref('https://api.anthropic.com')
 const editApiKey = ref('')
@@ -4650,6 +4658,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   mixedChannelWarningAction.value = null
   form.name = newAccount.name
   form.notes = newAccount.notes || ''
+  egressPool.value = Array.isArray(newAccount.extra?.openai_egress_pool)
+    ? (newAccount.extra.openai_egress_pool as AccountEgressLane[]).map(lane => ({ ...lane })) : []
   form.proxy_id = newAccount.proxy_id
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
@@ -6457,6 +6467,23 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    if (props.account.platform === 'openai' && !isSparkShadow.value) {
+      const ids = new Set<number>()
+      if (egressPool.value.length > 32 || egressPool.value.some(lane => {
+        const duplicate = ids.has(lane.proxy_id)
+        ids.add(lane.proxy_id)
+        return duplicate || !Number.isSafeInteger(lane.proxy_id) || lane.proxy_id <= 0 ||
+          !Number.isInteger(lane.concurrency) || lane.concurrency < 1 || lane.concurrency > 2000
+      })) {
+        appStore.showError(t('admin.accounts.egressPool.invalid'))
+        return
+      }
+      updatePayload.extra = {
+        ...((updatePayload.extra as Record<string, unknown>) || props.account.extra || {}),
+        openai_egress_pool: egressPool.value.map(lane => ({ ...lane }))
+      }
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

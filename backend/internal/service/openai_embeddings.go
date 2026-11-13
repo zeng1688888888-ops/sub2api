@@ -24,6 +24,12 @@ func (s *OpenAIGatewayService) ForwardEmbeddings(
 	body []byte,
 	defaultMappedModel string,
 ) (*OpenAIForwardResult, error) {
+	ctx, account, releaseEgress, egressErr := s.beginAccountEgress(ctx, account)
+	if egressErr != nil {
+		return nil, egressErr
+	}
+	defer releaseEgress()
+
 	startTime := time.Now()
 
 	originalModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())

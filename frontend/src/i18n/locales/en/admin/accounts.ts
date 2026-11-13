@@ -1,5 +1,19 @@
 export default {
     accounts: {
+      egressPool: {
+  "title": "Multiple egresses",
+  "hint": "Distribute one account’s requests across proxies with a concurrency limit for each. Full, disabled or expired egresses receive no new requests.",
+  "exit": "Egress {index}",
+  "laneConcurrency": "Egress {index} concurrency",
+  "selectProxy": "Select a proxy",
+  "unavailable": "Unavailable",
+  "remove": "Remove egress",
+  "add": "Add egress",
+  "capacity": "Configured concurrency ceiling: {count}",
+  "defaultProxyHint": "The regular proxy is still used for login and maintenance. Generation requests use these egresses; WebSocket requests use an HTTP bridge with an egress selected for each turn.",
+  "invalid": "Select unique proxies with integer concurrency from 1 to 2000, up to 32 egresses.",
+  "laneTooltip": "{name}: {current} / {max}"
+},
       title: 'Account Management',
       description: 'Manage AI platform accounts and credentials',
       createAccount: 'Create Account',

@@ -73,6 +73,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	defaultMappedModel string,
 	compatPromptCacheTenantIsolated bool,
 ) (*OpenAIForwardResult, error) {
+	ctx, account, releaseEgress, egressErr := s.beginAccountEgress(ctx, account)
+	if egressErr != nil {
+		return nil, egressErr
+	}
+	defer releaseEgress()
+
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)

@@ -1433,6 +1433,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
   return (
     current.updated_at !== next.updated_at ||
     current.current_concurrency !== next.current_concurrency ||
+    JSON.stringify(current.egress_statuses) !== JSON.stringify(next.egress_statuses) ||
     current.current_window_cost !== next.current_window_cost ||
     current.active_sessions !== next.active_sessions ||
     current.schedulable !== next.schedulable ||
@@ -2228,6 +2229,7 @@ const accountMatchesCurrentFilters = (account: Account) => {
 const mergeRuntimeFields = (oldAccount: Account, updatedAccount: Account): Account => ({
   ...updatedAccount,
   current_concurrency: updatedAccount.current_concurrency ?? oldAccount.current_concurrency,
+  egress_statuses: updatedAccount.egress_statuses,
   current_window_cost: updatedAccount.current_window_cost ?? oldAccount.current_window_cost,
   active_sessions: updatedAccount.active_sessions ?? oldAccount.active_sessions
 })

@@ -1308,6 +1308,7 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"responses_websockets_v2_enabled",
 		"openai_ws_enabled",
 		"openai_ws_force_http",
+		service.AccountEgressPoolExtraKey,
 		"openai_responses_mode",
 		"openai_responses_supported",
 		// 透传开关必须进投影：候选过滤(ListSchedulableAccounts)读的是本投影，

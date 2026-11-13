@@ -1289,6 +1289,16 @@ export interface GrokModelDiagnostics {
   mappings: GrokModelDiagnosticItem[]
 }
 
+export interface AccountEgressLane {
+  proxy_id: number
+  concurrency: number
+}
+export interface AccountEgressStatus extends AccountEgressLane {
+  name: string
+  current_concurrency: number | null
+  available: boolean
+}
+
 export interface Account {
   id: number
   name: string
@@ -1338,6 +1348,7 @@ export interface Account {
   concurrency: number
   load_factor?: number | null
   current_concurrency?: number // Real-time concurrency count from Redis
+  egress_statuses?: AccountEgressStatus[]
   scheduler_score?: {
     base_score: number
     sticky_score?: number

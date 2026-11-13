@@ -2541,6 +2541,9 @@ func (s *OpenAIGatewayService) isOpenAIAccountTransportCompatible(account *Accou
 		return false
 	}
 	if requiredTransport == OpenAIUpstreamTransportResponsesWebsocketV2Ingress {
+		if account.HasEgressPool() && s.cfg != nil && !s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled {
+			return s.cfg.Gateway.OpenAIWS.Enabled && account.IsOpenAIResponsesWebSocketV2Enabled()
+		}
 		if s.cfg == nil || !s.cfg.Gateway.OpenAIWS.ModeRouterV2Enabled {
 			return s.getOpenAIWSProtocolResolver().Resolve(account).Transport == OpenAIUpstreamTransportResponsesWebsocketV2
 		}

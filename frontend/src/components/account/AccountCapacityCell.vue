@@ -7,6 +7,15 @@
       </svg>
     </CapacityBadge>
 
+    <CapacityBadge
+      v-for="(lane, index) in account.egress_statuses" :key="lane.proxy_id"
+      :color-class="egressClass(lane)" :current="lane.current_concurrency ?? '?'" :max="lane.concurrency"
+      :tooltip="t('admin.accounts.egressPool.laneTooltip', { name: lane.name, current: lane.current_concurrency ?? '?', max: lane.concurrency }) + (!lane.available ? ' · ' + t('admin.accounts.egressPool.unavailable') : '')"
+      data-testid="egress-capacity"
+    >
+      <span class="text-[9px] opacity-60">{{ index + 1 }}</span>
+    </CapacityBadge>
+
     <!-- 5h窗口费用限制 -->
     <CapacityBadge v-if="showWindowCost" :color-class="windowCostClass" :tooltip="windowCostTooltip" :current="'$' + formatCost(currentWindowCost)" :max="'$' + formatCost(account.window_cost_limit)">
       <svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -38,7 +47,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import type { Account } from '@/types'
+import type { Account, AccountEgressStatus } from '@/types'
 import { supportsAccountQuota } from '@/utils/accountQuota'
 import CapacityBadge from '@/components/account/CapacityBadge.vue'
 import QuotaBadge from '@/components/account/QuotaBadge.vue'
@@ -48,6 +57,13 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+
+function egressClass(lane: AccountEgressStatus) {
+  if (!lane.available || lane.current_concurrency == null) return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+  if (lane.current_concurrency >= lane.concurrency) return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+  if (lane.current_concurrency > 0) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
+  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+}
 
 // ====== 并发 ======
 const currentConcurrency = computed(() => props.account.current_concurrency || 0)

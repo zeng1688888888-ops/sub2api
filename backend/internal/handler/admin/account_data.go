@@ -58,18 +58,19 @@ type DataProxy struct {
 // 影子的独立调度配置(priority/并发/分组/status 管理员可单独调)亦不在本备份范围,属已知局限
 // (外审第6轮裁决:保持排除 + 前端警告,而非升级格式做完整往返)。
 type DataAccount struct {
-	Name               string         `json:"name"`
-	Notes              *string        `json:"notes,omitempty"`
-	Platform           string         `json:"platform"`
-	Type               string         `json:"type"`
-	Credentials        map[string]any `json:"credentials"`
-	Extra              map[string]any `json:"extra,omitempty"`
-	ProxyKey           *string        `json:"proxy_key,omitempty"`
-	Concurrency        int            `json:"concurrency"`
-	Priority           int            `json:"priority"`
-	RateMultiplier     *float64       `json:"rate_multiplier,omitempty"`
-	ExpiresAt          *int64         `json:"expires_at,omitempty"`
-	AutoPauseOnExpired *bool          `json:"auto_pause_on_expired,omitempty"`
+	EgressPool         []DataAccountEgress `json:"egress_pool,omitempty"`
+	Name               string              `json:"name"`
+	Notes              *string             `json:"notes,omitempty"`
+	Platform           string              `json:"platform"`
+	Type               string              `json:"type"`
+	Credentials        map[string]any      `json:"credentials"`
+	Extra              map[string]any      `json:"extra,omitempty"`
+	ProxyKey           *string             `json:"proxy_key,omitempty"`
+	Concurrency        int                 `json:"concurrency"`
+	Priority           int                 `json:"priority"`
+	RateMultiplier     *float64            `json:"rate_multiplier,omitempty"`
+	ExpiresAt          *int64              `json:"expires_at,omitempty"`
+	AutoPauseOnExpired *bool               `json:"auto_pause_on_expired,omitempty"`
 }
 
 type DataImportRequest struct {
@@ -199,13 +200,19 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			v := acc.ExpiresAt.Unix()
 			expiresAt = &v
 		}
+		exportExtra, egressPool, exportErr := exportAccountEgress(acc.Extra, proxyKeyByID, includeProxies)
+		if exportErr != nil {
+			response.ErrorFrom(c, exportErr)
+			return
+		}
 		dataAccounts = append(dataAccounts, DataAccount{
+			EgressPool:         egressPool,
 			Name:               acc.Name,
 			Notes:              acc.Notes,
 			Platform:           acc.Platform,
 			Type:               acc.Type,
 			Credentials:        acc.Credentials,
-			Extra:              acc.Extra,
+			Extra:              exportExtra,
 			ProxyKey:           proxyKey,
 			Concurrency:        acc.Concurrency,
 			Priority:           acc.Priority,
@@ -431,6 +438,13 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 			}
 		}
 
+		importedExtra, egressErr := importAccountEgress(item.Extra, item.EgressPool, proxyKeyToID)
+		if egressErr != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, DataImportError{Kind: "account", Name: item.Name, Message: egressErr.Error()})
+			continue
+		}
+		item.Extra = importedExtra
 		enrichCredentialsFromIDToken(&item)
 
 		accountInput := &service.CreateAccountInput{
@@ -575,6 +589,16 @@ func (h *AccountHandler) resolveExportProxies(ctx context.Context, accounts []se
 	seen := make(map[int64]struct{})
 	ids := make([]int64, 0)
 	for i := range accounts {
+		lanes, err := service.ParseAccountEgressPool(accounts[i].Extra)
+		if err != nil {
+			return nil, err
+		}
+		for _, lane := range lanes {
+			if _, ok := seen[lane.ProxyID]; !ok {
+				seen[lane.ProxyID] = struct{}{}
+				ids = append(ids, lane.ProxyID)
+			}
+		}
 		if accounts[i].ProxyID == nil {
 			continue
 		}
