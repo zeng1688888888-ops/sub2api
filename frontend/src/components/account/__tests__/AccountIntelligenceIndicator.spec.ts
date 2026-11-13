@@ -99,3 +99,10 @@ it('reports the scheduling pause alongside the persisted verdict', async () => {
   await wrapper.get('button').trigger('click'); await flushPromises()
   expect(wrapper.emitted('updated')).toEqual([[failed, true]])
 })
+
+it('reports automatic recovery without reopening a manual pause', async () => {
+  probe.mockResolvedValue({ snapshot: healthy, scheduling_resumed: true })
+  const wrapper=render()
+  await wrapper.get('button').trigger('click');await flushPromises()
+  expect(wrapper.emitted('updated')).toEqual([[healthy,false]])
+})

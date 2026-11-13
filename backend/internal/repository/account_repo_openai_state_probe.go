@@ -102,35 +102,62 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 	return result, nil
 }
 
-// UpdateIntelligenceProbeSnapshot atomically records the verdict and disables scheduling.
-// A healthy/inconclusive verdict never re-enables an account paused by an operator.
-func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context, id int64, snapshot *service.OpenAICodexStateProbeSnapshot, pause bool) error {
+// UpdateIntelligenceProbeSnapshot uses the current row's pause ownership, so a
+// manual scheduling change made during a probe cannot be undone by stale results.
+func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context, id int64, snapshot *service.OpenAICodexStateProbeSnapshot, pause, resume bool) (service.IntelligenceSchedulingTransition, error) {
+	var transition service.IntelligenceSchedulingTransition
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
-		return scoped.UpdateIntelligenceProbeSnapshot(ctx, id, snapshot, pause)
+		return scoped.UpdateIntelligenceProbeSnapshot(ctx, id, snapshot, pause, resume)
 	}
-	payload, err := json.Marshal(map[string]any{service.OpenAICodexStateProbeSnapshotExtraKey: snapshot})
+	payload, err := json.Marshal(snapshot)
 	if err != nil {
-		return err
+		return transition, err
 	}
 	client := clientFromContext(ctx, r.client)
-	result, err := client.ExecContext(ctx, `UPDATE accounts SET extra=COALESCE(extra,'{}'::jsonb)||$1::jsonb,
- schedulable=CASE WHEN $3 THEN FALSE ELSE schedulable END, updated_at=NOW()
- WHERE id=$2 AND deleted_at IS NULL`, string(payload), id, pause)
+	rows, err := client.QueryContext(ctx, `
+ WITH locked AS MATERIALIZED (
+  SELECT id,schedulable,status,COALESCE(extra,'{}'::jsonb) AS extra
+  FROM accounts WHERE id=$2 AND deleted_at IS NULL FOR UPDATE
+ ), decision AS (
+  SELECT *, ($3::boolean AND schedulable) AS do_pause,
+   ($4::boolean AND NOT schedulable AND status='active' AND extra->>'intelligence_auto_paused'='true') IS TRUE AS do_resume
+  FROM locked
+ )
+ UPDATE accounts a SET
+  schedulable=CASE WHEN d.do_pause THEN FALSE WHEN d.do_resume THEN TRUE ELSE d.schedulable END,
+  extra=(CASE WHEN d.do_pause THEN d.extra||'{"intelligence_auto_paused":true}'::jsonb
+              WHEN d.do_resume THEN d.extra-'intelligence_auto_paused' ELSE d.extra END)
+   ||jsonb_build_object('openai_codex_state_probe',$1::jsonb||jsonb_build_object('reason',
+       COALESCE($1::jsonb->>'reason','')||CASE WHEN d.do_pause THEN $5::text WHEN d.do_resume THEN $6::text ELSE '' END)),
+  updated_at=NOW()
+ FROM decision d WHERE a.id=d.id
+ RETURNING a.extra->'openai_codex_state_probe',d.do_pause,d.do_resume
+`, string(payload), id, pause, resume, service.IntelligencePauseReason, service.IntelligenceResumeReason)
 	if err != nil {
-		return err
+		return transition, err
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return transition, err
+		}
+		return transition, service.ErrAccountNotFound
 	}
-	if n == 0 {
-		return service.ErrAccountNotFound
+	var saved []byte
+	if err := rows.Scan(&saved, &transition.Paused, &transition.Resumed); err != nil {
+		return transition, err
 	}
-	if pause {
+	if err := rows.Close(); err != nil {
+		return transition, err
+	}
+	if err := json.Unmarshal(saved, snapshot); err != nil {
+		return transition, err
+	}
+	if transition.Paused || transition.Resumed {
 		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-			logger.LegacyPrintf("repository.account", "enqueue intelligence pause failed: account=%d err=%v", id, err)
+			logger.LegacyPrintf("repository.account", "enqueue intelligence scheduling change failed: account=%d err=%v", id, err)
 		}
 	}
 	r.syncSchedulerAccountSnapshot(ctx, id)
-	return nil
+	return transition, nil
 }

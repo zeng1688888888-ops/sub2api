@@ -38,7 +38,7 @@ export default {
   "routePool": "Network: concurrency proxy pool",
   "routeDefault": "Network: account default (single proxy / ordinary network)",
   "autoLabel": "Auto · every 8 min",
-  "autoHint": "Intelligence and pelican tests run automatically for active GPT accounts eight minutes after completion. Due tasks are checked every 15 seconds and may queue when busy. Manual testing remains available. Two consecutive failed answers pause scheduling; network errors do not count. Tests continue while paused; resume scheduling manually."
+  "autoHint": "Intelligence and pelican tests run automatically for active GPT accounts eight minutes after completion. Due tasks are checked every 15 seconds and may queue when busy. Manual testing remains available. Two consecutive failed answers pause scheduling; network errors do not count. Tests continue while paused; two consecutive passes resume automatically paused accounts only. Manual pauses are never automatically reopened."
 },
       egressPool: {
   "title": "Multiple egresses",

@@ -13,6 +13,14 @@ import (
 // separate from the ticket cache so a probe result can never be mistaken for
 // a usable turn ticket.
 const OpenAICodexStateProbeSnapshotExtraKey = "openai_codex_state_probe"
+const IntelligenceAutoPauseExtraKey = "intelligence_auto_paused"
+const IntelligencePauseReason = " 连续两次明确未通过，已自动暂停调度；连续两次通过后自动恢复。"
+const IntelligenceResumeReason = " 连续两次明确通过，已自动恢复调度。"
+
+type IntelligenceSchedulingTransition struct {
+	Paused  bool
+	Resumed bool
+}
 
 const (
 	openAICodexStateProbeHistoryLimit        = 500
@@ -22,7 +30,7 @@ const (
 
 // Intelligence results and an automatic pause must be persisted together.
 type intelligenceProbeSnapshotWriter interface {
-	UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool) error
+	UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool, bool) (IntelligenceSchedulingTransition, error)
 }
 
 // OpenAICodexStateProbeSnapshot is the compact account-level state projected
@@ -173,25 +181,40 @@ func (s *AccountTestService) persistOpenAICodexStateProbeResult(
 		snapshot.HealthRate = nil
 	}
 
-	pause := result.Method == openAIIntelligenceProbeMethod && result.Verdict == OpenAICodexStateDegraded && snapshot.ConsecutiveDegraded >= 2 &&
-		account.Platform == PlatformOpenAI && account.IsOpenAIOAuthLike() && !account.IsShadow() && !account.IsSyntheticUITest() && !account.IsOpenAIAgentIdentity()
-	if pause {
-		snapshot.Reason += " 连续两次明确未通过，已暂停账号调度；请复测后手动恢复。"
-	}
+	eligible := result.Method == openAIIntelligenceProbeMethod && account.Platform == PlatformOpenAI && account.IsOpenAIOAuthLike() && !account.IsShadow() && !account.IsSyntheticUITest() && !account.IsOpenAIAgentIdentity()
+	pause := eligible && result.Verdict == OpenAICodexStateDegraded && snapshot.ConsecutiveDegraded >= 2
+	resume := eligible && result.Verdict == OpenAICodexStateHealthy && snapshot.ConsecutiveHealthy >= 2
+	var transition IntelligenceSchedulingTransition
 	var err error
 	if writer, ok := s.accountRepo.(intelligenceProbeSnapshotWriter); ok {
-		err = writer.UpdateIntelligenceProbeSnapshot(ctx, account.ID, snapshot, pause)
+		transition, err = writer.UpdateIntelligenceProbeSnapshot(ctx, account.ID, snapshot, pause, resume)
 	} else {
-		err = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{OpenAICodexStateProbeSnapshotExtraKey: snapshot})
-		if err == nil && pause {
-			err = s.accountRepo.SetSchedulable(ctx, account.ID, false)
+		owned, _ := account.Extra[IntelligenceAutoPauseExtraKey].(bool)
+		transition.Paused = pause && account.Schedulable
+		transition.Resumed = resume && owned && !account.Schedulable && account.IsActive()
+		if transition.Paused {
+			snapshot.Reason += IntelligencePauseReason
+			owned = true
+		}
+		if transition.Resumed {
+			snapshot.Reason += IntelligenceResumeReason
+			owned = false
+		}
+		updates := map[string]any{OpenAICodexStateProbeSnapshotExtraKey: snapshot}
+		if transition.Paused || transition.Resumed {
+			updates[IntelligenceAutoPauseExtraKey] = owned
+		}
+		err = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
+		if err == nil && (transition.Paused || transition.Resumed) {
+			err = s.accountRepo.SetSchedulable(ctx, account.ID, transition.Resumed)
 		}
 	}
 	if err != nil {
 		return err
 	}
 	result.Snapshot = snapshot
-	result.SchedulingPaused = pause
+	result.SchedulingPaused = transition.Paused
+	result.SchedulingResumed = transition.Resumed
 	result.Reason = snapshot.Reason
 	return nil
 }

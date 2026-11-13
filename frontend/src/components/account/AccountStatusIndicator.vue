@@ -32,7 +32,7 @@
       </span>
     </template>
 
-    <AccountIntelligenceIndicator :account="account" @updated="(snapshot, paused) => emit('intelligence-updated', { ...account, openai_codex_state_probe: snapshot, ...(paused ? { schedulable: false } : {}) })" />
+    <AccountIntelligenceIndicator :account="account" @updated="(snapshot, paused) => emit('intelligence-updated', { ...account, openai_codex_state_probe: snapshot, ...(paused === undefined ? {} : { schedulable: !paused }) })" />
 
     <!-- Error Info Indicator -->
     <div v-if="hasError && account.error_message" class="group/error relative">

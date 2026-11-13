@@ -23,9 +23,11 @@ func TestIntelligenceConsecutiveFailuresPauseScheduling(t *testing.T) {
 	second := record(OpenAICodexStateDegraded)
 	require.True(t, second.SchedulingPaused)
 	require.False(t, a.Schedulable)
-	require.Contains(t, second.Snapshot.Reason, "已暂停")
-	require.False(t, record(OpenAICodexStateHealthy).SchedulingPaused)
+	require.Contains(t, second.Snapshot.Reason, "已自动暂停")
+	require.False(t, record(OpenAICodexStateHealthy).SchedulingResumed)
 	require.False(t, a.Schedulable)
+	require.True(t, record(OpenAICodexStateHealthy).SchedulingResumed)
+	require.True(t, a.Schedulable)
 }
 
 func TestIntelligencePauseRequiresTwoConsecutiveSameRouteResults(t *testing.T) {
@@ -87,8 +89,8 @@ func TestIntelligencePauseDoesNotAffectOtherAccountTypes(t *testing.T) {
 
 type intelligenceAtomicFailureRepo struct{ *intelligenceProbeRepo }
 
-func (*intelligenceAtomicFailureRepo) UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool) error {
-	return errors.New("database write failed")
+func (*intelligenceAtomicFailureRepo) UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool, bool) (IntelligenceSchedulingTransition, error) {
+	return IntelligenceSchedulingTransition{}, errors.New("database write failed")
 }
 func TestIntelligencePauseDoesNotReportSuccessWhenPersistenceFails(t *testing.T) {
 	a := excelAccount()
@@ -100,4 +102,34 @@ func TestIntelligencePauseDoesNotReportSuccessWhenPersistenceFails(t *testing.T)
 	require.False(t, r.SchedulingPaused)
 	require.Nil(t, r.Snapshot)
 	require.True(t, a.Schedulable)
+}
+
+func TestIntelligenceRecoveryRespectsManualPauseAndInterruptedStreak(t *testing.T) {
+	for _, manual := range []bool{false, true} {
+		a := excelAccount()
+		a.Schedulable = false
+		if !manual {
+			a.Extra[IntelligenceAutoPauseExtraKey] = true
+		}
+		svc := &AccountTestService{accountRepo: &intelligenceProbeRepo{account: a}}
+		outcomes := []OpenAICodexStateVerdict{OpenAICodexStateHealthy, OpenAICodexStateInconclusive, OpenAICodexStateHealthy, OpenAICodexStateHealthy}
+		for i, v := range outcomes {
+			r := &OpenAICodexStateProbeResult{Method: "candy", Route: "bps", Model: "gpt-6-astra", Verdict: v}
+			require.NoError(t, svc.persistOpenAICodexStateProbeResult(context.Background(), a, r))
+			require.Equal(t, !manual && i == 3, r.SchedulingResumed)
+		}
+		require.Equal(t, !manual, a.Schedulable)
+	}
+}
+func TestIntelligenceDoesNotClaimAnAlreadyManuallyPausedAccount(t *testing.T) {
+	a := excelAccount()
+	a.Schedulable = false
+	svc := &AccountTestService{accountRepo: &intelligenceProbeRepo{account: a}}
+	for _, v := range []OpenAICodexStateVerdict{OpenAICodexStateDegraded, OpenAICodexStateDegraded, OpenAICodexStateHealthy, OpenAICodexStateHealthy} {
+		r := &OpenAICodexStateProbeResult{Method: "candy", Route: "bps", Model: "gpt-6-astra", Verdict: v}
+		require.NoError(t, svc.persistOpenAICodexStateProbeResult(context.Background(), a, r))
+		require.False(t, r.SchedulingPaused)
+		require.False(t, r.SchedulingResumed)
+		require.False(t, a.Schedulable)
+	}
 }

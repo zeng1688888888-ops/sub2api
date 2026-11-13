@@ -425,6 +425,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OpenCodeGoUsageSnapshotExtraKey)
 	delete(accountExtra, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(accountExtra, AccountSVGProbeExtraKey)
+	delete(accountExtra, IntelligenceAutoPauseExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
 	account := &Account{
 		Name:        input.Name,
@@ -703,6 +704,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OpenCodeGoUsageSnapshotExtraKey)
 		delete(normalizedExtra, OpenAICodexStateProbeSnapshotExtraKey)
 		delete(normalizedExtra, AccountSVGProbeExtraKey)
+		delete(normalizedExtra, IntelligenceAutoPauseExtraKey)
 		// 目录观察和能力 metadata 只由同步写入。表单里的旧值或注入值不能进入本次更新。
 		delete(normalizedExtra, grokObservedModelsExtraKey)
 		delete(normalizedExtra, UpstreamModelMetadataExtraKey)
@@ -727,6 +729,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenCodeGoUsageSnapshotExtraKey,
 			OpenAICodexStateProbeSnapshotExtraKey,
 			AccountSVGProbeExtraKey,
+			IntelligenceAutoPauseExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -980,6 +983,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OpenCodeGoUsageSnapshotExtraKey)
 	delete(updates, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(updates, AccountSVGProbeExtraKey)
+	delete(updates, IntelligenceAutoPauseExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
@@ -1014,6 +1018,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OpenCodeGoUsageSnapshotExtraKey)
 	delete(input.Extra, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(input.Extra, AccountSVGProbeExtraKey)
+	delete(input.Extra, IntelligenceAutoPauseExtraKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)

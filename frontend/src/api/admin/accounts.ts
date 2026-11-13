@@ -1062,6 +1062,7 @@ export type OpenAICodexStateVerdict = 'healthy' | 'degraded' | 'inconclusive'
 
 export interface OpenAICodexStateProbeResult {
   scheduling_paused?: boolean
+  scheduling_resumed?: boolean
   method?: 'candy'
   route?: 'codex' | 'bps'
   answer?: string

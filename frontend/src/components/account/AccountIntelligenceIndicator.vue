@@ -85,7 +85,8 @@ async function probe() {
     if (request.signal.aborted || props.account.id !== accountId) return
     if (result.snapshot) {
       localSnapshot.value = result.snapshot
-      if (result.scheduling_paused) emit('updated', result.snapshot, true)
+      if (result.scheduling_resumed) emit('updated', result.snapshot, false)
+      else if (result.scheduling_paused) emit('updated', result.snapshot, true)
       else emit('updated', result.snapshot)
     } else {
       error.value = t('admin.accounts.stateProbe.requestFailed')
