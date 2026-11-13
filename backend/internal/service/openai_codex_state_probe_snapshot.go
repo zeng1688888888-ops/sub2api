@@ -20,6 +20,11 @@ const (
 	openAICodexStateProbeUnsupportedInterval = AccountAutomaticProbeInterval
 )
 
+// Intelligence results and an automatic pause must be persisted together.
+type intelligenceProbeSnapshotWriter interface {
+	UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool) error
+}
+
 // OpenAICodexStateProbeSnapshot is the compact account-level state projected
 // into the admin account list. History stores only decisive verdicts and is
 // bounded so a long-lived account cannot grow its JSONB value without limit.
@@ -168,10 +173,27 @@ func (s *AccountTestService) persistOpenAICodexStateProbeResult(
 		snapshot.HealthRate = nil
 	}
 
+	pause := result.Method == openAIIntelligenceProbeMethod && result.Verdict == OpenAICodexStateDegraded && snapshot.ConsecutiveDegraded >= 2 &&
+		account.Platform == PlatformOpenAI && account.IsOpenAIOAuthLike() && !account.IsShadow() && !account.IsSyntheticUITest() && !account.IsOpenAIAgentIdentity()
+	if pause {
+		snapshot.Reason += " 连续两次明确未通过，已暂停账号调度；请复测后手动恢复。"
+	}
+	var err error
+	if writer, ok := s.accountRepo.(intelligenceProbeSnapshotWriter); ok {
+		err = writer.UpdateIntelligenceProbeSnapshot(ctx, account.ID, snapshot, pause)
+	} else {
+		err = s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{OpenAICodexStateProbeSnapshotExtraKey: snapshot})
+		if err == nil && pause {
+			err = s.accountRepo.SetSchedulable(ctx, account.ID, false)
+		}
+	}
+	if err != nil {
+		return err
+	}
 	result.Snapshot = snapshot
-	return s.accountRepo.UpdateExtra(ctx, account.ID, map[string]any{
-		OpenAICodexStateProbeSnapshotExtraKey: snapshot,
-	})
+	result.SchedulingPaused = pause
+	result.Reason = snapshot.Reason
+	return nil
 }
 
 func openAICodexStateProbeFloat64Ptr(value float64) *float64 {

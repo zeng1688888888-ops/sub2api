@@ -27,6 +27,11 @@ func (r *intelligenceProbeRepo) UpdateExtra(_ context.Context, _ int64, extra ma
 	return nil
 }
 
+func (r *intelligenceProbeRepo) SetSchedulable(_ context.Context, _ int64, value bool) error {
+	r.account.Schedulable = value
+	return nil
+}
+
 func intelligenceAnswerStream(answer string) string {
 	return fmt.Sprintf("event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":%q}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_iq\",\"status\":\"completed\",\"model\":\"gpt-6-astra\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":%q}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}}\n\n", answer, answer)
 }

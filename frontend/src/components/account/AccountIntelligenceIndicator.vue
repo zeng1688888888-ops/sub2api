@@ -30,7 +30,7 @@ import { formatDateTimeToMinute } from '@/utils/format'
 import type { Account, OpenAICodexStateProbeSnapshot } from '@/types'
 
 const props = defineProps<{ account: Account }>()
-const emit = defineEmits<{ (event: 'updated', snapshot: OpenAICodexStateProbeSnapshot): void }>()
+const emit = defineEmits<{ (event: 'updated', snapshot: OpenAICodexStateProbeSnapshot, schedulingPaused?: boolean): void }>()
 const { t } = useI18n()
 const localSnapshot = ref<OpenAICodexStateProbeSnapshot | null>(null)
 const running = ref(false)
@@ -85,7 +85,8 @@ async function probe() {
     if (request.signal.aborted || props.account.id !== accountId) return
     if (result.snapshot) {
       localSnapshot.value = result.snapshot
-      emit('updated', result.snapshot)
+      if (result.scheduling_paused) emit('updated', result.snapshot, true)
+      else emit('updated', result.snapshot)
     } else {
       error.value = t('admin.accounts.stateProbe.requestFailed')
     }

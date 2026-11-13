@@ -1061,6 +1061,7 @@ export async function probeUpstreamBillingBatch(accountIds: number[]): Promise<U
 export type OpenAICodexStateVerdict = 'healthy' | 'degraded' | 'inconclusive'
 
 export interface OpenAICodexStateProbeResult {
+  scheduling_paused?: boolean
   method?: 'candy'
   route?: 'codex' | 'bps'
   answer?: string

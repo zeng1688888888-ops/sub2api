@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -98,4 +100,37 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 		}
 	}
 	return result, nil
+}
+
+// UpdateIntelligenceProbeSnapshot atomically records the verdict and disables scheduling.
+// A healthy/inconclusive verdict never re-enables an account paused by an operator.
+func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context, id int64, snapshot *service.OpenAICodexStateProbeSnapshot, pause bool) error {
+	if scoped := r.accountTransactionScope(ctx); scoped != r {
+		return scoped.UpdateIntelligenceProbeSnapshot(ctx, id, snapshot, pause)
+	}
+	payload, err := json.Marshal(map[string]any{service.OpenAICodexStateProbeSnapshotExtraKey: snapshot})
+	if err != nil {
+		return err
+	}
+	client := clientFromContext(ctx, r.client)
+	result, err := client.ExecContext(ctx, `UPDATE accounts SET extra=COALESCE(extra,'{}'::jsonb)||$1::jsonb,
+ schedulable=CASE WHEN $3 THEN FALSE ELSE schedulable END, updated_at=NOW()
+ WHERE id=$2 AND deleted_at IS NULL`, string(payload), id, pause)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return service.ErrAccountNotFound
+	}
+	if pause {
+		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
+			logger.LegacyPrintf("repository.account", "enqueue intelligence pause failed: account=%d err=%v", id, err)
+		}
+	}
+	r.syncSchedulerAccountSnapshot(ctx, id)
+	return nil
 }

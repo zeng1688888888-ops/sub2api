@@ -91,3 +91,11 @@ describe('AccountIntelligenceIndicator', () => {
     expect(render({ ...account(), platform: 'anthropic' }).find('[data-testid="account-intelligence"]').exists()).toBe(false)
   })
 })
+
+it('reports the scheduling pause alongside the persisted verdict', async () => {
+  const failed = { ...healthy, verdict: 'degraded', consecutive_degraded: 2 }
+  probe.mockResolvedValue({ snapshot: failed, scheduling_paused: true })
+  const wrapper = render()
+  await wrapper.get('button').trigger('click'); await flushPromises()
+  expect(wrapper.emitted('updated')).toEqual([[failed, true]])
+})

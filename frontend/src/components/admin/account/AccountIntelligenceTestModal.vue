@@ -81,7 +81,7 @@ async function start() {
     const result = await probeOpenAIAccountIntelligence(id, model.value.trim(), { signal: request.signal })
     if (request.signal.aborted || !props.show || props.account?.id !== id) return
     results.value = [result, ...results.value].slice(0, 20)
-    if (result.snapshot) emit('updated', { ...props.account, openai_codex_state_probe: result.snapshot })
+    if (result.snapshot) emit('updated', { ...props.account, openai_codex_state_probe: result.snapshot, ...(result.scheduling_paused ? { schedulable: false } : {}) })
   } catch (cause) {
     if (!request.signal.aborted) error.value = (cause as { message?: string })?.message || t('admin.accounts.stateProbe.requestFailed')
   } finally {

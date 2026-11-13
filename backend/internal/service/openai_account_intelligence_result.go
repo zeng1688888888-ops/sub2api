@@ -46,15 +46,16 @@ var ErrOpenAICodexStateProbeBusy = infraerrors.Conflict("STATE_PROBE_BUSY", "该
 
 // OpenAICodexStateProbeResult 是一次实际通道智力检测的完整结果，可直接作为接口 JSON 返回。
 type OpenAICodexStateProbeResult struct {
-	Method    string                         `json:"method,omitempty"`
-	Route     string                         `json:"route,omitempty"`
-	Answer    string                         `json:"answer,omitempty"`
-	Snapshot  *OpenAICodexStateProbeSnapshot `json:"snapshot,omitempty"`
-	AccountID int64                          `json:"account_id"`
-	Model     string                         `json:"model"`
-	Verdict   OpenAICodexStateVerdict        `json:"verdict"`
-	Reason    string                         `json:"reason"`
-	Failure   string                         `json:"failure,omitempty"`
+	Method           string                         `json:"method,omitempty"`
+	Route            string                         `json:"route,omitempty"`
+	Answer           string                         `json:"answer,omitempty"`
+	Snapshot         *OpenAICodexStateProbeSnapshot `json:"snapshot,omitempty"`
+	SchedulingPaused bool                           `json:"scheduling_paused,omitempty"`
+	AccountID        int64                          `json:"account_id"`
+	Model            string                         `json:"model"`
+	Verdict          OpenAICodexStateVerdict        `json:"verdict"`
+	Reason           string                         `json:"reason"`
+	Failure          string                         `json:"failure,omitempty"`
 	// Detail 是脱敏截断后的上游报错原文，便于看出「模型不支持」之类的具体原因。
 	Detail string `json:"detail,omitempty"`
 

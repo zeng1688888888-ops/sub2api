@@ -94,6 +94,7 @@ func (s *AccountTestService) probeOpenAIAccountIntelligence(ctx context.Context,
 	result.LatencyMs = result.FinishedAt.Sub(result.StartedAt).Milliseconds()
 	if err := s.persistOpenAICodexStateProbeResult(ctx, account, result); err != nil {
 		logger.LegacyPrintf("service.openai_account_intelligence_probe", "persist_failed: account_id=%d err=%v", accountID, err)
+		return nil, err
 	}
 	return result, nil
 }
