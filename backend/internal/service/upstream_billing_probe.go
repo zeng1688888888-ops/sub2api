@@ -243,19 +243,21 @@ type UpstreamBillingProbeService struct {
 	accountTestService *AccountTestService
 	settingService     *SettingService
 
-	parentCtx    context.Context
-	parentCancel context.CancelFunc
-	wg           sync.WaitGroup
-	mu           sync.Mutex
-	started      bool
-	stopped      bool
-	cycleMu      sync.Mutex
-	probeGroup   singleflight.Group
-	probeSlots   chan struct{}
-	now          func() time.Time
-	lockCache    LeaderLockCache
-	db           *sql.DB
-	instanceID   string
+	parentCtx         context.Context
+	parentCancel      context.CancelFunc
+	wg                sync.WaitGroup
+	mu                sync.Mutex
+	started           bool
+	stopped           bool
+	cycleMu           sync.Mutex
+	stateProbeCycleMu sync.Mutex
+	svgProbeCycleMu   sync.Mutex
+	probeGroup        singleflight.Group
+	probeSlots        chan struct{}
+	now               func() time.Time
+	lockCache         LeaderLockCache
+	db                *sql.DB
+	instanceID        string
 }
 
 type upstreamBillingProbeSnapshotWriter interface {
@@ -316,9 +318,11 @@ func (s *UpstreamBillingProbeService) Start() {
 		return
 	}
 	s.started = true
-	s.wg.Add(1)
+	s.wg.Add(3)
 	s.mu.Unlock()
 	go s.runLoop()
+	go s.runAccountProbeLoop("intelligence", s.RunOpenAICodexStateProbeDue)
+	go s.runAccountProbeLoop("pelican", s.RunAccountSVGProbeDue)
 }
 
 func (s *UpstreamBillingProbeService) Stop() {
@@ -339,7 +343,6 @@ func (s *UpstreamBillingProbeService) Stop() {
 func (s *UpstreamBillingProbeService) runLoop() {
 	defer s.wg.Done()
 	_ = s.RunDue(s.parentCtx)
-	_ = s.RunOpenAICodexStateProbeDue(s.parentCtx)
 	ticker := time.NewTicker(upstreamBillingProbeCycleInterval)
 	defer ticker.Stop()
 	for {
@@ -349,9 +352,6 @@ func (s *UpstreamBillingProbeService) runLoop() {
 		case <-ticker.C:
 			if err := s.RunDue(s.parentCtx); err != nil {
 				logger.LegacyPrintf("service.upstream_billing_probe", "run_due_failed: err=%v", err)
-			}
-			if err := s.RunOpenAICodexStateProbeDue(s.parentCtx); err != nil {
-				logger.LegacyPrintf("service.openai_codex_state_probe", "run_due_failed: err=%v", err)
 			}
 		}
 	}

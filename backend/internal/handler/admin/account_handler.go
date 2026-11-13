@@ -198,7 +198,9 @@ type CheckMixedChannelRequest struct {
 
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
-	EgressStatuses []service.AccountEgressStatus `json:"egress_statuses,omitempty"`
+	SVGProbe        *service.AccountSVGProbeResult `json:"svg_probe,omitempty"`
+	SVGProbeRunning bool                           `json:"svg_probe_running"`
+	EgressStatuses  []service.AccountEgressStatus  `json:"egress_statuses,omitempty"`
 	*dto.Account
 	simpleMode         bool                         `json:"-"`
 	CurrentConcurrency int                          `json:"current_concurrency"`
@@ -214,7 +216,9 @@ type AccountWithConcurrency struct {
 // for lite=1. It embeds dto.AccountListItem instead of the full dto.Account,
 // so groups/account_groups never appear in the list payload.
 type AccountListItemWithConcurrency struct {
-	EgressStatuses []service.AccountEgressStatus `json:"egress_statuses,omitempty"`
+	SVGProbe        *service.AccountSVGProbeResult `json:"svg_probe,omitempty"`
+	SVGProbeRunning bool                           `json:"svg_probe_running"`
+	EgressStatuses  []service.AccountEgressStatus  `json:"egress_statuses,omitempty"`
 	*dto.AccountListItem
 	CurrentConcurrency int                          `json:"current_concurrency"`
 	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
@@ -373,6 +377,8 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 		simpleMode:         h.isSimpleMode(),
 		CurrentConcurrency: 0,
 		EgressStatuses:     h.concurrencyService.GetAccountEgressStatuses(ctx, []service.Account{*account})[account.ID],
+		SVGProbe:           service.AccountSVGProbeFromAccount(account),
+		SVGProbeRunning:    h.accountTestService.AccountSVGProbeRunning(account.ID),
 	}
 	if account == nil {
 		return item
@@ -817,6 +823,8 @@ func (h *AccountHandler) List(c *gin.Context) {
 			simpleMode:         h.isSimpleMode(),
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			EgressStatuses:     egressStatuses[acc.ID],
+			SVGProbe:           service.AccountSVGProbeFromAccount(acc),
+			SVGProbeRunning:    h.accountTestService.AccountSVGProbeRunning(acc.ID),
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
 		}
@@ -855,6 +863,8 @@ func (h *AccountHandler) List(c *gin.Context) {
 				AccountListItem:    dto.AccountListItemFromAccount(item.Account),
 				CurrentConcurrency: item.CurrentConcurrency,
 				EgressStatuses:     item.EgressStatuses,
+				SVGProbe:           item.SVGProbe,
+				SVGProbeRunning:    item.SVGProbeRunning,
 				SchedulerScore:     item.SchedulerScore,
 				SchedulerScores:    item.SchedulerScores,
 				CurrentWindowCost:  item.CurrentWindowCost,

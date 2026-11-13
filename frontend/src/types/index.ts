@@ -1299,6 +1299,22 @@ export interface AccountEgressStatus extends AccountEgressLane {
   available: boolean
 }
 
+export interface AccountSVGProbeResult {
+  id: string
+  status: 'generated' | 'failed'
+  model: string
+  prompt: string
+  prompt_index: number
+  started_at: string
+  finished_at: string
+  latency_ms: number
+  failure?: string
+  message: string
+  has_svg: boolean
+  mime_type?: string
+  route?: 'account_default' | 'egress_pool'
+}
+
 export interface Account {
   id: number
   name: string
@@ -1349,6 +1365,8 @@ export interface Account {
   load_factor?: number | null
   current_concurrency?: number // Real-time concurrency count from Redis
   egress_statuses?: AccountEgressStatus[]
+  svg_probe?: AccountSVGProbeResult
+  svg_probe_running?: boolean
   scheduler_score?: {
     base_score: number
     sticky_score?: number

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="supported" class="w-44 space-y-1.5" data-testid="account-intelligence" :aria-busy="running">
+  <div v-if="supported" :title="t('admin.accounts.svgProbe.autoHint')" class="w-44 space-y-1.5" data-testid="account-intelligence" :aria-busy="running">
     <div class="flex items-center gap-1.5 text-xs">
       <Icon name="brain" size="sm" class="text-gray-400" />
       <span class="text-gray-500 dark:text-gray-400">{{ t('admin.accounts.stateProbe.title') }}</span>

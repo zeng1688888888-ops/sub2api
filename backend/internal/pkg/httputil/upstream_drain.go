@@ -9,6 +9,14 @@ import (
 const DefaultUpstreamDrainTimeout = 180 * time.Second
 
 type upstreamDrainKey struct{}
+type upstreamCancellationKey struct{}
+
+// WithUpstreamCancellation keeps administrative probes bounded by their caller
+// deadline. Unlike billed inference, these probes do not need a late-usage drain.
+func WithUpstreamCancellation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, upstreamCancellationKey{}, true)
+}
+
 type upstreamDrainPolicy struct {
 	client  context.Context
 	timeout time.Duration
@@ -21,6 +29,9 @@ type upstreamDrainPolicy struct {
 func DetachUpstreamContext(ctx context.Context, timeout ...time.Duration) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if cancelWithCaller, _ := ctx.Value(upstreamCancellationKey{}).(bool); cancelWithCaller {
+		return ctx
 	}
 	policy := upstreamDrainPolicy{client: ctx}
 	if previous, ok := ctx.Value(upstreamDrainKey{}).(upstreamDrainPolicy); ok {

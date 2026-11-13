@@ -28,8 +28,8 @@ func (s *UpstreamBillingProbeService) RunOpenAICodexStateProbeDue(ctx context.Co
 	if s == nil || s.accountRepo == nil || s.accountTestService == nil {
 		return nil
 	}
-	s.cycleMu.Lock()
-	defer s.cycleMu.Unlock()
+	s.stateProbeCycleMu.Lock()
+	defer s.stateProbeCycleMu.Unlock()
 
 	release, acquired, err := s.tryAcquireStateProbeLeaderLock(ctx)
 	if err != nil {
@@ -67,7 +67,7 @@ func (s *UpstreamBillingProbeService) RunOpenAICodexStateProbeDue(ctx context.Co
 			if ctx.Err() != nil {
 				return nil
 			}
-			if _, probeErr := s.accountTestService.ProbeOpenAIAccountIntelligence(ctx, accountID, OpenAICodexStateProbeDefaultModel); probeErr != nil {
+			if _, probeErr := s.accountTestService.probeOpenAIAccountIntelligence(ctx, accountID, OpenAICodexStateProbeDefaultModel, true); probeErr != nil {
 				logger.LegacyPrintf("service.openai_codex_state_probe", "probe_due_failed: account_id=%d err=%v", accountID, probeErr)
 			}
 			return nil
@@ -87,11 +87,11 @@ func (s *UpstreamBillingProbeService) listDueOpenAICodexStateProbeAccounts(ctx c
 	due := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !account.IsOpenAIOAuthLike() || !account.IsActive() {
+		if !account.IsOpenAIOAuthLike() || !account.IsActive() || account.IsShadow() || account.IsSyntheticUITest() {
 			continue
 		}
 		snapshot := OpenAICodexStateProbeSnapshotFromAccount(&account)
-		if snapshot != nil && snapshot.Method == openAIIntelligenceProbeMethod && snapshot.Route == openAIIntelligenceProbeRoute(&account, snapshot.Model) && !snapshot.NextProbeAt.IsZero() && now.Before(snapshot.NextProbeAt) {
+		if snapshot != nil && snapshot.Method == openAIIntelligenceProbeMethod && snapshot.Route == openAIIntelligenceProbeRoute(&account, snapshot.Model) && !snapshot.LastProbeAt.IsZero() && now.Before(snapshot.LastProbeAt.Add(AccountAutomaticProbeInterval)) {
 			continue
 		}
 		due = append(due, account)

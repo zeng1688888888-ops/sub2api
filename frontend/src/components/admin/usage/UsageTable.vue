@@ -251,6 +251,8 @@
               <span class="font-medium tabular-nums" :class="LATENCY_TEXT_CLASSES[durationSeverity(row.duration_ms ?? 0)]">{{ formatDuration(row.duration_ms) }}</span>
               <span class="text-gray-400 dark:text-gray-500" :title="t('usage.outputTpsHint')">{{ t('usage.outputTps') }}</span>
               <span data-testid="output-tps" class="font-medium tabular-nums text-gray-700 dark:text-gray-300">{{ formatUsageOutputRate(row) }}</span>
+              <span class="text-gray-400 dark:text-gray-500" :title="t('usage.cacheRateHint')">{{ t('usage.cacheRate') }}</span>
+              <span data-testid="cache-rate" class="font-medium tabular-nums text-sky-600 dark:text-sky-400" :title="t('usage.cacheRateHint')">{{ formatCacheReadRate(row) }}</span>
             </div>
           </div>
         </template>
@@ -736,6 +738,16 @@ const getRequestTypeBadgeClass = (row: AdminUsageLog): string => {
 
 const formatUserAgent = (ua: string): string => {
   return ua
+}
+
+// Usage records store uncached input, cache writes and cache reads separately.
+const formatCacheReadRate = (row: AdminUsageLog): string => {
+  const input = row.input_tokens ?? 0
+  const write = row.cache_creation_tokens ?? 0
+  const read = row.cache_read_tokens ?? 0
+  if (![input, write, read].every(value => Number.isFinite(value) && value >= 0)) return '—'
+  const total = input + write + read
+  return total > 0 ? (read / total * 100).toFixed(1) + '%' : '—'
 }
 
 // 超过 1 分钟简化为 "Xm Ys"，免去人工换算（超过 1 小时再进位为 "Xh Ym"）

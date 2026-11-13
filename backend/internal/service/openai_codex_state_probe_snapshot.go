@@ -16,8 +16,8 @@ const OpenAICodexStateProbeSnapshotExtraKey = "openai_codex_state_probe"
 
 const (
 	openAICodexStateProbeHistoryLimit        = 500
-	openAICodexStateProbeInterval            = 30 * time.Minute
-	openAICodexStateProbeUnsupportedInterval = 4 * time.Hour
+	openAICodexStateProbeInterval            = AccountAutomaticProbeInterval
+	openAICodexStateProbeUnsupportedInterval = AccountAutomaticProbeInterval
 )
 
 // OpenAICodexStateProbeSnapshot is the compact account-level state projected

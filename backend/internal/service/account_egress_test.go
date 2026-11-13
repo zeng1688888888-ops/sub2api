@@ -174,3 +174,52 @@ func TestAccountEgressForwardUsesSelectedProxyAndReleases(t *testing.T) {
 		})
 	}
 }
+
+// Optional egress pools must not change ordinary direct or single-proxy requests.
+func TestAccountEgressUnconfiguredPreservesOrdinaryForwarding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, emptyPool := range []bool{false, true} {
+		for _, singleProxy := range []bool{false, true} {
+			name := "direct"
+			if singleProxy {
+				name = "single_proxy"
+			}
+			if emptyPool {
+				name += "_empty_pool"
+			} else {
+				name += "_absent_pool"
+			}
+			t.Run(name, func(t *testing.T) {
+				wire := `data: {"type":"response.completed","response":{"id":"resp_direct","status":"completed","model":"gpt-6-astra","output":[],"usage":{"input_tokens":1,"output_tokens":1}}}
+
+`
+				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
+				gateway := openAIClientToolsTestService(upstream)
+				cache := &egressCacheStub{failure: errors.New("egress unavailable")}
+				gateway.concurrencyService = NewConcurrencyService(cache)
+				account := excelAccount()
+				account.Extra["openai_excel_bps"] = false
+				delete(account.Extra, AccountEgressPoolExtraKey)
+				if emptyPool {
+					account.Extra[AccountEgressPoolExtraKey] = []AccountEgressLane{}
+				}
+				expectedProxy := ""
+				if singleProxy {
+					id := int64(9)
+					account.ProxyID = &id
+					account.Proxy = &Proxy{ID: id, Protocol: "http", Host: "ordinary.example", Port: 8080, Status: StatusActive}
+					expectedProxy = "http://ordinary.example:8080"
+				}
+				body := []byte(`{"model":"gpt-6-astra","stream":true,"input":[{"role":"user","content":"hello"}]}`)
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest("POST", "/v1/responses", bytes.NewReader(body))
+				result, err := gateway.Forward(context.Background(), c, account, body)
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				require.Equal(t, expectedProxy, upstream.lastProxyURL)
+				require.Zero(t, cache.acquireCalls)
+				require.Zero(t, cache.releaseCalls)
+			})
+		}
+	}
+}

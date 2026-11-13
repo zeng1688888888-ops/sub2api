@@ -23,7 +23,7 @@ func TestOpenAIIntelligenceMonitorSelectsBothRoutesAndDueResults(t *testing.T) {
 	native.Extra["openai_excel_bps"] = false
 	inactive.Status = "inactive"
 	apiKey.Type = AccountTypeAPIKey
-	future.Extra[OpenAICodexStateProbeSnapshotExtraKey] = &OpenAICodexStateProbeSnapshot{Method: "candy", Route: "bps", Model: "gpt-6-astra", NextProbeAt: now.Add(time.Hour)}
+	future.Extra[OpenAICodexStateProbeSnapshotExtraKey] = &OpenAICodexStateProbeSnapshot{Method: "candy", Route: "bps", Model: "gpt-6-astra", LastProbeAt: now, NextProbeAt: now.Add(time.Hour)}
 	legacy.Extra[OpenAICodexStateProbeSnapshotExtraKey] = &OpenAICodexStateProbeSnapshot{Verdict: OpenAICodexStateDegraded, NextProbeAt: now.Add(time.Hour)}
 	switched.Extra[OpenAICodexStateProbeSnapshotExtraKey] = &OpenAICodexStateProbeSnapshot{Method: "candy", Route: "codex", Model: "gpt-6-astra", NextProbeAt: now.Add(time.Hour)}
 	repo := &intelligenceMonitorRepo{}

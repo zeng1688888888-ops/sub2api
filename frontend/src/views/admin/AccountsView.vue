@@ -17,6 +17,7 @@
             @create="showCreate = true"
           >
             <template #after>
+              <button type="button" class="btn btn-secondary" @click="showSVGProbeSettings = true">{{ t('admin.accounts.svgProbe.settings') }}</button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -291,6 +292,9 @@
               <AccountStatusIndicator :account="row" @show-temp-unsched="handleShowTempUnsched" @intelligence-updated="handleAccountUpdated" />
             </div>
           </template>
+          <template #cell-svg_probe="{ row }">
+            <AccountSVGProbeCell :account="row" @updated="handleAccountUpdated" @settings="showSVGProbeSettings = true" />
+          </template>
           <template #cell-schedulable="{ row }">
             <button @click="handleToggleSchedulable(row)" :disabled="togglingSchedulable === row.id" class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-dark-800" :class="[row.schedulable ? 'bg-primary-500 hover:bg-primary-600' : 'bg-gray-200 hover:bg-gray-300 dark:bg-dark-600 dark:hover:bg-dark-500']" :title="row.schedulable ? t('admin.accounts.schedulableEnabled') : t('admin.accounts.schedulableDisabled')">
               <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="[row.schedulable ? 'translate-x-4' : 'translate-x-0']" />
@@ -459,6 +463,7 @@
     <ReAuthAccountModal :show="showReAuth" :account="reAuthAcc" @close="closeReAuthModal" @reauthorized="handleAccountUpdated" />
     <AccountTestModal :show="showTest" :account="testingAcc" @close="closeTestModal" />
     <AccountIntelligenceTestModal :show="showIntelligenceTest" :account="intelligenceTestingAcc" @close="showIntelligenceTest = false; intelligenceTestingAcc = null" @updated="handleAccountUpdated" />
+    <AccountSVGProbeSettings :show="showSVGProbeSettings" :account-ids="svgProbeTargetIDs" @close="showSVGProbeSettings = false" @updated="handleAccountUpdated" />
     <AccountStatsModal :show="showStats" :account="statsAcc" @close="closeStatsModal" />
     <ScheduledTestsPanel :show="showSchedulePanel" :account-id="scheduleAcc?.id ?? null" :model-options="scheduleModelOptions" @close="closeSchedulePanel" />
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @intelligence-test="handleIntelligenceTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
@@ -518,6 +523,8 @@ import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountIntelligenceTestModal from '@/components/admin/account/AccountIntelligenceTestModal.vue'
+import AccountSVGProbeCell from '@/components/account/AccountSVGProbeCell.vue'
+import AccountSVGProbeSettings from '@/components/admin/account/AccountSVGProbeSettings.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
 import ScheduledTestsPanel from '@/components/admin/account/ScheduledTestsPanel.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -653,6 +660,9 @@ const accountToolsDropdownStyle = computed(() => ({
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
+const showSVGProbeSettings = ref(false)
+const svgProbeTargetIDs = computed(() => selIds.value.length ? [...selIds.value] : accounts.value.filter(a => a.platform === 'openai' && ['oauth', 'setup-token'].includes(a.type) && !a.parent_account_id).map(a => a.id))
+
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
 const HIDDEN_COLUMNS_VERSION_KEY = 'account-hidden-columns-version'
@@ -1433,6 +1443,8 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
   return (
     current.updated_at !== next.updated_at ||
     current.current_concurrency !== next.current_concurrency ||
+    current.svg_probe?.id !== next.svg_probe?.id ||
+    current.svg_probe_running !== next.svg_probe_running ||
     JSON.stringify(current.egress_statuses) !== JSON.stringify(next.egress_statuses) ||
     current.current_window_cost !== next.current_window_cost ||
     current.active_sessions !== next.active_sessions ||
@@ -1836,6 +1848,7 @@ const allColumns = computed(() => {
     { key: 'platform_type', label: t('admin.accounts.columns.platformType'), sortable: false },
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
+    { key: 'svg_probe', label: t('admin.accounts.svgProbe.column'), sortable: false },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
     { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
   ]

@@ -153,6 +153,9 @@ type AccountTestService struct {
 	pluginManager             *PluginManager
 	openaiGatewayService      *OpenAIGatewayService
 	stateProbeAccounts        sync.Map
+	svgProbeAccounts          sync.Map
+	svgProbeSlotsOnce         sync.Once
+	svgProbeSlots             chan struct{}
 	agentIdentityTaskMu       sync.Mutex
 	agentIdentityWS           agentIdentityWSConnectionInvalidator
 	// grokWSDialer is optional; realtime account tests use the default OpenAI-style

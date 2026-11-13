@@ -371,6 +371,10 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.PUT("/ollama-cloud-usage/settings", h.Admin.Account.UpdateOllamaCloudUsageSettings)
 		accounts.GET("/opencode-go-usage/settings", h.Admin.Account.GetOpenCodeGoUsageSettings)
 		accounts.PUT("/opencode-go-usage/settings", h.Admin.Account.UpdateOpenCodeGoUsageSettings)
+		accounts.GET("/svg-probe/settings", h.Admin.Account.GetSVGProbeSettings)
+		accounts.PUT("/svg-probe/settings", h.Admin.Account.SaveSVGProbeSettings)
+		accounts.POST("/:id/svg-probe", h.Admin.Account.SVGProbe)
+		accounts.GET("/:id/svg-probe/:result_id/image", h.Admin.Account.SVGProbeImage)
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		accounts.GET("/:id/claude/reset-credits", h.Admin.Account.ClaudeResetCredits)
 		// Same protection as the Codex reset-quota route (admin auth, audit, compliance guard).

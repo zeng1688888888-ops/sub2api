@@ -12,6 +12,14 @@ import (
 // the database layer. It only returns active OpenAI OAuth-like accounts; the
 // service still applies the final account capability checks before probing.
 func (r *accountRepository) ListDueOpenAICodexStateProbeAccounts(ctx context.Context, now time.Time, limit int) ([]service.Account, error) {
+	return r.listDueAccountAutomaticProbes(ctx, now, limit, service.OpenAICodexStateProbeSnapshotExtraKey, "last_probe_at")
+}
+
+func (r *accountRepository) ListDueAccountSVGProbeAccounts(ctx context.Context, now time.Time, limit int) ([]service.Account, error) {
+	return r.listDueAccountAutomaticProbes(ctx, now, limit, service.AccountSVGProbeExtraKey, "finished_at")
+}
+
+func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, now time.Time, limit int, extraKey, timeField string) ([]service.Account, error) {
 	if limit <= 0 {
 		return []service.Account{}, nil
 	}
@@ -23,22 +31,24 @@ func (r *accountRepository) ListDueOpenAICodexStateProbeAccounts(ctx context.Con
 		WITH candidates AS (
 			SELECT
 				id,
-				CASE WHEN extra #>> '{openai_codex_state_probe,method}' = 'candy'
-					THEN extra #>> '{openai_codex_state_probe,next_probe_at}'
-				END AS next_probe_at
+				CASE WHEN $3::text = 'openai_codex_state_probe'
+					AND (extra #>> '{openai_codex_state_probe,method}') IS DISTINCT FROM 'candy' THEN NULL
+					ELSE extra -> $3::text ->> $4::text END AS last_probe_at
 			FROM accounts
 			WHERE deleted_at IS NULL
 				AND status = 'active'
 				AND platform = 'openai'
 				AND type IN ('oauth', 'setup-token')
+				AND parent_account_id IS NULL
+				AND COALESCE(extra ->> 'synthetic_ui_test', 'false') <> 'true'
 		), parsed AS MATERIALIZED (
 			SELECT
 				id,
-				next_probe_at,
+				last_probe_at,
 				jsonb_path_query_first(
 					jsonb_build_object(
 						'value', replace(regexp_replace(regexp_replace(
-							next_probe_at,
+							last_probe_at,
 							'(\.[0-9]{6})[0-9]+(Z|[+-][0-9]{2}:[0-9]{2})$',
 							'\1\2'
 						), 'Z$', '+00:00'), 'T', ' ')
@@ -46,17 +56,17 @@ func (r *accountRepository) ListDueOpenAICodexStateProbeAccounts(ctx context.Con
 					'$.value.datetime()',
 					'{}'::jsonb,
 					true
-				) #>> '{}' AS parsed_next_probe_at
+				) #>> '{}' AS parsed_last_probe_at
 			FROM candidates
 		)
 		SELECT id
 		FROM parsed
-		WHERE next_probe_at IS NULL
-			OR parsed_next_probe_at IS NULL
-			OR parsed_next_probe_at::timestamptz <= $1
-		ORDER BY parsed_next_probe_at::timestamptz NULLS FIRST, id
+		WHERE last_probe_at IS NULL
+			OR parsed_last_probe_at IS NULL
+			OR parsed_last_probe_at::timestamptz <= $1
+		ORDER BY parsed_last_probe_at::timestamptz NULLS FIRST, id
 		LIMIT $2
-	`, now.UTC(), limit)
+	`, now.UTC().Add(-service.AccountAutomaticProbeInterval), limit, extraKey, timeField)
 	if err != nil {
 		return nil, err
 	}

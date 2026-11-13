@@ -22,6 +22,10 @@ func openAIIntelligenceProbeRoute(account *Account, model string) string {
 // account's configured request route. Ticket rotation only describes native
 // Codex and must never stand in for an answer from the BPS route.
 func (s *AccountTestService) ProbeOpenAIAccountIntelligence(ctx context.Context, accountID int64, model string) (*OpenAICodexStateProbeResult, error) {
+	return s.probeOpenAIAccountIntelligence(ctx, accountID, model, false)
+}
+
+func (s *AccountTestService) probeOpenAIAccountIntelligence(ctx context.Context, accountID int64, model string, onlyDue bool) (*OpenAICodexStateProbeResult, error) {
 	if s == nil || s.accountRepo == nil {
 		return nil, errors.New("account test service unavailable")
 	}
@@ -37,6 +41,19 @@ func (s *AccountTestService) ProbeOpenAIAccountIntelligence(ctx context.Context,
 		return nil, ErrOpenAICodexStateProbeBusy
 	}
 	defer release()
+	if onlyDue {
+		account, err = s.accountRepo.GetByID(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if account == nil || !account.IsActive() || !account.IsOpenAIOAuthLike() || account.IsShadow() || account.IsSyntheticUITest() {
+			return nil, nil
+		}
+		snapshot := OpenAICodexStateProbeSnapshotFromAccount(account)
+		if snapshot != nil && snapshot.Method == openAIIntelligenceProbeMethod && snapshot.Route == openAIIntelligenceProbeRoute(account, snapshot.Model) && !snapshot.LastProbeAt.IsZero() && time.Now().Before(snapshot.LastProbeAt.Add(AccountAutomaticProbeInterval)) {
+			return nil, nil
+		}
+	}
 	model = strings.TrimSpace(model)
 	if model == "" {
 		model = OpenAICodexStateProbeDefaultModel

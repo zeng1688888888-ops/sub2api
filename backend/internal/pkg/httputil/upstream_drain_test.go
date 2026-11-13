@@ -52,3 +52,23 @@ func TestUpstreamDrainReleaseDoesNotCancelCaller(t *testing.T) {
 	require.NoError(t, client.Err())
 	cancelClient()
 }
+
+func TestAdministrativeProbeKeepsCancellationAndDeadline(t *testing.T) {
+	original, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	parent := WithUpstreamCancellation(original)
+	detached := DetachUpstreamContext(DetachUpstreamContext(parent))
+	want, _ := original.Deadline()
+	got, ok := detached.Deadline()
+	require.True(t, ok)
+	require.Equal(t, want, got)
+	attempt, release := NewUpstreamAttemptContext(detached, time.Minute)
+	defer release()
+	cancel()
+	select {
+	case <-attempt.Done():
+		require.ErrorIs(t, attempt.Err(), context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("administrative probe unexpectedly waited for usage drain")
+	}
+}
