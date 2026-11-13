@@ -379,7 +379,7 @@ func svgProbeResponseText(body []byte) (string, error) {
 		}
 		switch event.Type {
 		case "response.output_text.delta":
-			delta.WriteString(event.Delta)
+			_, _ = delta.WriteString(event.Delta)
 		case "response.completed", "response.done":
 			if event.Response.Status != "" && event.Response.Status != "completed" {
 				return "", errors.New("SVG 响应未完整完成")
@@ -390,7 +390,7 @@ func svgProbeResponseText(body []byte) (string, error) {
 				if item.Type == "message" {
 					for _, c := range item.Content {
 						if c.Type == "output_text" {
-							final.WriteString(c.Text)
+							_, _ = final.WriteString(c.Text)
 						}
 					}
 				}
@@ -445,7 +445,7 @@ func (s *AccountTestService) ReadAccountSVGProbe(ctx context.Context, id int64, 
 	if err != nil {
 		return nil, "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, accountSVGProbeMaxBytes+1))
 	if err != nil {
 		return nil, "", err

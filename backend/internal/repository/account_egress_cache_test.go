@@ -18,7 +18,8 @@ func TestAccountEgressAtomicCapacityAndIsolation(t *testing.T) {
 	r := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: r.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	lanes := []service.AccountEgressLane{{ProxyID: 1, Concurrency: 5}, {ProxyID: 2, Concurrency: 5}, {ProxyID: 3, Concurrency: 5}}
 	var success atomic.Int64
@@ -56,7 +57,8 @@ func TestAccountEgressReleaseExpiryAndRenewal(t *testing.T) {
 	r := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: r.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	lanes := []service.AccountEgressLane{{ProxyID: 7, Concurrency: 1}}
 	id, err := cache.AcquireAccountEgress(ctx, 1, lanes, "first", time.Minute)
@@ -91,7 +93,8 @@ func TestAccountEgressBalancesByUtilization(t *testing.T) {
 	r := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: r.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	cache := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	cache, ok := NewConcurrencyCache(client, 15, 900).(service.AccountEgressCache)
+	require.True(t, ok)
 	ctx := context.Background()
 	lanes := []service.AccountEgressLane{{ProxyID: 1, Concurrency: 2}, {ProxyID: 2, Concurrency: 6}}
 	for i := 0; i < 4; i++ {

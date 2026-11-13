@@ -27,8 +27,8 @@ var probeAnimationTargets = func() map[string]bool {
 	}
 	return targets
 }()
-var probeCSSComments = regexp.MustCompile("(?s)/\\*.*?\\*/")
-var probeCSSURLs = regexp.MustCompile("(?i)url\\(([^)]*)\\)")
+var probeCSSComments = regexp.MustCompile(`(?s)/\*.*?\*/`)
+var probeCSSURLs = regexp.MustCompile(`(?i)url\(([^)]*)\)`)
 
 func validateProbeCSS(css string) error {
 	check := strings.ToLower(probeCSSComments.ReplaceAllString(css, ""))
@@ -59,7 +59,7 @@ func sanitizeProbeHTML(raw string) ([]byte, error) {
 		return nil, errors.New("动画文档超过 1 MiB")
 	}
 	lower := strings.ToLower(raw)
-	if !(strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html") || strings.HasPrefix(lower, "<svg")) || strings.Contains(lower, "<!entity") || strings.Contains(lower, "<?") {
+	if (!strings.HasPrefix(lower, "<!doctype html") && !strings.HasPrefix(lower, "<html") && !strings.HasPrefix(lower, "<svg")) || strings.Contains(lower, "<!entity") || strings.Contains(lower, "<?") {
 		return nil, errors.New("请返回包含 SVG 的完整 HTML 文档")
 	}
 	doc, err := html.Parse(strings.NewReader(raw))
@@ -102,12 +102,12 @@ func sanitizeProbeHTML(raw string) ([]byte, error) {
 				if a.Namespace == "xmlns" || key == "xmlns" {
 					continue
 				}
-				if a.Namespace != "" && !(svg && a.Namespace == "xlink" && key == "href") {
+				if a.Namespace != "" && (!svg || a.Namespace != "xlink" || key != "href") {
 					return errors.New("不支持的属性命名空间")
 				}
 				a.Namespace = "" // xlink:href is normalized to SVG2 href.
 				common := key == "id" || key == "class" || key == "style" || key == "lang" || key == "title" || key == "role" || strings.HasPrefix(key, "aria-")
-				if !common && !(svg && (probeSVGAttributes[key] || animation && probeAnimationAttributes[key])) {
+				if !common && (!svg || (!probeSVGAttributes[key] && (!animation || !probeAnimationAttributes[key]))) {
 					continue
 				}
 				if key == "href" && !probeSVGRef.MatchString(strings.TrimSpace(a.Val)) {
@@ -141,7 +141,7 @@ func sanitizeProbeHTML(raw string) ([]byte, error) {
 				var css strings.Builder
 				for child := n.FirstChild; child != nil; child = child.NextSibling {
 					if child.Type == html.TextNode {
-						css.WriteString(child.Data)
+						_, _ = css.WriteString(child.Data)
 					}
 				}
 				if err := validateProbeCSS(css.String()); err != nil {
@@ -174,7 +174,7 @@ func sanitizeProbeHTML(raw string) ([]byte, error) {
 	head.InsertBefore(&html.Node{Type: html.ElementNode, Data: "meta", DataAtom: atom.Meta, Attr: []html.Attribute{{Key: "charset", Val: "utf-8"}}}, policy)
 	head.InsertBefore(&html.Node{Type: html.ElementNode, Data: "meta", DataAtom: atom.Meta, Attr: []html.Attribute{{Key: "name", Val: "viewport"}, {Key: "content", Val: "width=device-width, initial-scale=1"}}}, policy.NextSibling)
 	var out bytes.Buffer
-	out.WriteString("<!doctype html>\n")
+	_, _ = out.WriteString("<!doctype html>\n")
 	if err := html.Render(&out, doc); err != nil {
 		return nil, err
 	}
