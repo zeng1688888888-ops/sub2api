@@ -80,8 +80,20 @@ jobs:
           path: backend/cmd/server/VERSION
           retention-days: 1
 
-  build-frontend:
+  validate-ci:
     needs: prepare
+    uses: ./.github/workflows/backend-ci.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.sha }}
+
+  validate-security:
+    needs: prepare
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      source_ref: ${{ needs.prepare.outputs.sha }}
+
+  build-frontend:
+    needs: [prepare, validate-ci, validate-security]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -137,7 +149,7 @@ jobs:
           check-latest: false
           cache: false
       - name: Verify Go version
-        run: go version | grep -q 'go1.27.3'
+        run: test "$(go env GOVERSION)" = "go$(awk '/^go / {print $2}' backend/go.mod)"
       - name: Restore target-specific Go cache
         id: go-cache
         uses: actions/cache/restore@v6
@@ -191,7 +203,7 @@ jobs:
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   release:
-    needs: [prepare, build-binaries]
+    needs: [prepare, validate-ci, validate-security, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: write

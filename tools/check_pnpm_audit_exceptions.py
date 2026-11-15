@@ -139,6 +139,14 @@ def parse_date(value: str) -> date | None:
         return None
 
 
+def validate_audit_result(audit: object) -> None:
+    """Fail closed on registry/network errors instead of treating them as no findings."""
+    if not isinstance(audit, dict) or audit.get("error"):
+        raise ValueError("Audit did not return a valid report")
+    if not (isinstance(audit.get("advisories"), dict) or isinstance(audit.get("vulnerabilities"), dict)):
+        raise ValueError("Audit report is missing vulnerability data")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--audit", required=True)
@@ -147,6 +155,12 @@ def main() -> int:
 
     with open(args.audit, "r", encoding="utf-8") as handle:
         audit = json.load(handle)
+
+    try:
+        validate_audit_result(audit)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 1
 
     # 读取异常清单并建立索引，便于快速匹配包名 + advisory。
     exceptions = parse_exceptions(args.exceptions)
