@@ -4,7 +4,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -31,13 +33,18 @@ type updateServiceGitHubClientStub struct {
 	release        *GitHubRelease
 	recentReleases []*GitHubRelease
 	recentErr      error
+	latestErr      error
+	latestRepo     string
+	recentRepo     string
 }
 
-func (s *updateServiceGitHubClientStub) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
-	return s.release, nil
+func (s *updateServiceGitHubClientStub) FetchLatestRelease(_ context.Context, repo string) (*GitHubRelease, error) {
+	s.latestRepo = repo
+	return s.release, s.latestErr
 }
 
-func (s *updateServiceGitHubClientStub) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+func (s *updateServiceGitHubClientStub) FetchRecentReleases(_ context.Context, repo string, _ int) ([]*GitHubRelease, error) {
+	s.recentRepo = repo
 	return s.recentReleases, s.recentErr
 }
 
@@ -184,4 +191,66 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
 	require.Contains(t, err.Error(), "no compatible release found")
+}
+
+func TestUpdateServiceUsesForkForLatestAndRollback(t *testing.T) {
+	client := &updateServiceGitHubClientStub{
+		release:        &GitHubRelease{TagName: "v0.2.24", HTMLURL: "https://github.com/zeng1688888888-ops/sub2api/releases/tag/v0.2.24"},
+		recentReleases: []*GitHubRelease{{TagName: "v0.2.22"}},
+	}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.2.23", "release")
+	info, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, "zeng1688888888-ops/sub2api", client.latestRepo)
+	require.Contains(t, info.ReleaseInfo.HTMLURL, "/zeng1688888888-ops/sub2api/")
+	versions, err := svc.ListRollbackVersions(context.Background())
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	require.Equal(t, "zeng1688888888-ops/sub2api", client.recentRepo)
+}
+
+func TestUpdateServiceIgnoresLegacyOrOtherRepositoryCache(t *testing.T) {
+	for _, repository := range []string{"", "Wei-Shaw/sub2api"} {
+		for _, offline := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/offline=%t", repository, offline), func(t *testing.T) {
+				data, err := json.Marshal(map[string]any{
+					"repository": repository, "latest": "9.9.9", "timestamp": time.Now().Unix(),
+					"release_info": &ReleaseInfo{HTMLURL: "https://github.com/Wei-Shaw/sub2api/releases/tag/v9.9.9"},
+				})
+				require.NoError(t, err)
+				client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.2.24"}}
+				if offline {
+					client.latestErr = errors.New("github unavailable")
+				}
+				svc := NewUpdateService(&updateServiceCacheStub{data: string(data)}, client, "0.2.23", "release")
+				info, err := svc.CheckUpdate(context.Background(), false)
+				require.NoError(t, err)
+				require.Equal(t, "zeng1688888888-ops/sub2api", client.latestRepo)
+				require.False(t, info.Cached)
+				if offline {
+					require.False(t, info.HasUpdate)
+					require.Nil(t, info.ReleaseInfo)
+					require.Contains(t, info.Warning, "github unavailable")
+				} else {
+					require.True(t, info.HasUpdate)
+					require.Equal(t, "0.2.24", info.LatestVersion)
+				}
+			})
+		}
+	}
+}
+
+func TestUpdateServiceRetainsSameRepositoryCacheOnNetworkFailure(t *testing.T) {
+	client := &updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.2.24"}}
+	svc := NewUpdateService(&updateServiceCacheStub{}, client, "0.2.23", "release")
+	_, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	client.latestErr = errors.New("github unavailable")
+	info, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, info.Cached)
+	require.True(t, info.HasUpdate)
+	require.Equal(t, "0.2.24", info.LatestVersion)
+	require.Contains(t, info.Warning, "github unavailable")
 }
