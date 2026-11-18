@@ -73,7 +73,7 @@ func (s *OpenAIGatewayService) forwardAnthropicViaRawChatCompletions(
 		return nil, err
 	}
 	chatReq.Model = upstreamModel
-	if openai.IsGPT61SolModelSpelling(upstreamModel) {
+	if openai.IsGPT61Or62SolModelSpelling(upstreamModel) {
 		chatReq.Temperature = nil
 		chatReq.TopP = nil
 	}

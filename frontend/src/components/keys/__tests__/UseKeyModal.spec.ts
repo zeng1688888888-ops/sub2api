@@ -728,6 +728,8 @@ describe('UseKeyModal', () => {
       expect(models[model].variants).toHaveProperty('max')
       expect(models[model].variants).toHaveProperty('xhigh')
     }
+    expect(models['gpt-6.2-sol']).toEqual({ ...models['gpt-6.1-sol'], name: 'GPT-6.2 Sol' })
+    expect(models['gpt-6.2-astra']).toEqual({ ...models['gpt-6-astra'], name: 'GPT-6.2 Astra' })
     expect(models['gpt-5.6'].name).toBe('GPT-5.6 (Sol)')
     expect(models['gpt-6.1-sol'].variants).not.toHaveProperty('none')
     expect(models['gpt-6.1-terra']).toEqual({

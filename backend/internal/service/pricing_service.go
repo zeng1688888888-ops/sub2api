@@ -74,6 +74,24 @@ var (
 		Mode:                                "chat",
 		SupportsPromptCaching:               true,
 	}
+	// GPT-6.2 keeps the configured predecessor tier/context policy, with new base rates.
+	openAIGPT62AstraFallbackPricing = &LiteLLMModelPricing{
+		InputCostPerToken:                   8e-06,
+		InputCostPerTokenPriority:           16e-06,
+		OutputCostPerToken:                  40e-06,
+		OutputCostPerTokenPriority:          80e-06,
+		CacheCreationInputTokenCost:         10e-06,
+		CacheCreationInputTokenCostPriority: 20e-06,
+		CacheReadInputTokenCost:             0.4e-06,
+		CacheReadInputTokenCostPriority:     0.8e-06,
+		LongContextInputTokenThreshold:      272_000,
+		LongContextInputCostMultiplier:      2,
+		LongContextOutputCostMultiplier:     1.5,
+		SupportsServiceTier:                 true,
+		LiteLLMProvider:                     "openai",
+		Mode:                                "chat",
+		SupportsPromptCaching:               true,
+	}
 	openAIGPT61TerraFallbackPricing = &LiteLLMModelPricing{
 		InputCostPerToken:                   1e-6,
 		InputCostPerTokenPriority:           2e-6,
@@ -1379,6 +1397,9 @@ func normalizeModelNameForPricing(model string) string {
 
 	model = strings.TrimLeft(model, "/")
 	if canonical := canonicalizeOpenAIModelAliasSpelling(model); canonical != "" {
+		if openai.IsGPT62SolModelSpelling(canonical) || openai.IsGPT62AstraModelSpelling(canonical) {
+			return normalizeKnownOpenAICodexModel(canonical)
+		}
 		if canonical == "gpt-6" {
 			return "gpt-6-astra"
 		}
@@ -1621,6 +1642,19 @@ func (s *PricingService) matchOpenAIModel(model string) *LiteLLMModelPricing {
 		}
 	}
 
+	if openai.IsGPT62SolModelSpelling(model) {
+		if pricing, ok := s.pricingData["gpt-6.2-sol"]; ok {
+			return pricing
+		}
+		// Sol 6.2 uses the same rates and policy as Sol 6.1.
+		return openAIGPT61SolFallbackPricing
+	}
+	if openai.IsGPT62AstraModelSpelling(model) {
+		if pricing, ok := s.pricingData["gpt-6.2-astra"]; ok {
+			return pricing
+		}
+		return openAIGPT62AstraFallbackPricing
+	}
 	if openai.IsGPT61TerraModelSpelling(model) {
 		if pricing, ok := s.pricingData["gpt-6.1-terra"]; ok {
 			return pricing
