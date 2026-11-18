@@ -3670,6 +3670,12 @@
         <OpenAIImageSizeTiersField v-model="openAIImageSizeTiers" />
       </div>
 
+      <IntelligenceAutoPauseField
+        v-if="form.platform === 'openai' && accountCategory === 'oauth-based' && oauthFlowRef?.inputMethod !== 'agent_identity'"
+        v-model="intelligenceAutoPauseEnabled"
+        @update:model-value="intelligenceAutoPauseTouched = true"
+      />
+
       <div>
         <div class="flex items-center justify-between">
           <div>
@@ -4120,6 +4126,7 @@
 </template>
 
 <script setup lang="ts">
+import IntelligenceAutoPauseField from './IntelligenceAutoPauseField.vue'
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4713,6 +4720,8 @@ const applyGrokOAuthUpstreamConfig = (credentials: Record<string, unknown>) => {
   applyHeaderOverride(credentials, headerOverrideEnabled.value, headerOverrideRows.value, 'create')
 }
 const interceptWarmupRequests = ref(false)
+const intelligenceAutoPauseEnabled = ref(false)
+const intelligenceAutoPauseTouched = ref(false)
 const autoPauseOnExpired = ref(true)
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
@@ -5683,6 +5692,8 @@ const resetForm = () => {
   grokOAuthCustomBaseUrlEnabled.value = false
   grokOAuthBaseUrl.value = ''
   interceptWarmupRequests.value = false
+  intelligenceAutoPauseEnabled.value = false
+  intelligenceAutoPauseTouched.value = false
   autoPauseOnExpired.value = true
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -5758,6 +5769,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
   }
 
   const extra: Record<string, unknown> = { ...(base || {}) }
+  if (accountCategory.value === 'oauth-based' && oauthFlowRef.value?.inputMethod !== 'agent_identity') {
+    extra.intelligence_auto_pause_enabled = intelligenceAutoPauseEnabled.value
+  } else {
+    delete extra.intelligence_auto_pause_enabled
+  }
   if (accountCategory.value === 'oauth-based') {
     extra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value
     extra.openai_oauth_responses_websockets_v2_enabled = isOpenAIWSModeEnabled(openaiOAuthResponsesWebSocketV2Mode.value)
@@ -5833,6 +5849,9 @@ const buildOpenAICodexImportExtra = (): Record<string, unknown> | undefined => {
   const extra = buildOpenAIExtra()
   if (!extra) {
     return undefined
+  }
+  if (!intelligenceAutoPauseTouched.value) {
+    delete extra.intelligence_auto_pause_enabled
   }
   if (!openAILongContextBillingTouched.value) {
     delete extra.openai_long_context_billing_enabled

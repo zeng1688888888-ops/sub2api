@@ -44,6 +44,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import Input from '@/components/common/Input.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { probeOpenAIAccountIntelligence, type OpenAICodexStateProbeResult } from '@/api/admin/accounts'
+import { applyIntelligenceSnapshot } from '@/utils/accountIntelligence'
 import { formatDateTimeToMinute } from '@/utils/format'
 import type { Account } from '@/types'
 
@@ -81,7 +82,7 @@ async function start() {
     const result = await probeOpenAIAccountIntelligence(id, model.value.trim(), { signal: request.signal })
     if (request.signal.aborted || !props.show || props.account?.id !== id) return
     results.value = [result, ...results.value].slice(0, 20)
-    if (result.snapshot) emit('updated', { ...props.account, openai_codex_state_probe: result.snapshot, ...(result.scheduling_resumed ? { schedulable: true } : result.scheduling_paused ? { schedulable: false } : {}) })
+    if (result.snapshot) emit('updated', applyIntelligenceSnapshot(props.account, result.snapshot, result.scheduling_paused))
   } catch (cause) {
     if (!request.signal.aborted) error.value = (cause as { message?: string })?.message || t('admin.accounts.stateProbe.requestFailed')
   } finally {

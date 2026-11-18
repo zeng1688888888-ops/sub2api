@@ -276,6 +276,9 @@ func (h *AccountHandler) importCodexSessions(ctx context.Context, req CodexSessi
 			}
 			mergedCredentials := mergeCodexImportCredentials(existing.Credentials, credentials, item)
 			mergedExtra := mergeCodexImportMap(existing.Extra, extra)
+			if _, explicit := req.Extra[service.IntelligenceAutoPauseEnabledExtraKey]; !explicit {
+				delete(mergedExtra, service.IntelligenceAutoPauseEnabledExtraKey)
+			}
 			updateInput := &service.UpdateAccountInput{
 				Credentials:        mergedCredentials,
 				Extra:              mergedExtra,

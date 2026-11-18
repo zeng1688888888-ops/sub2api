@@ -29,6 +29,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 
 	entsql "entgo.io/ent/dialect/sql"
@@ -449,7 +450,7 @@ func (r *accountRepository) Update(ctx context.Context, account *service.Account
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
 		return scoped.Update(ctx, account)
 	}
-	return r.updateAccount(ctx, account, nil, nil, account.RateMultiplier)
+	return r.updateAccount(ctx, account, nil, nil, account.RateMultiplier, nil)
 }
 
 // UpdateWithAccountBillingSettings applies an admin account edit while
@@ -461,8 +462,9 @@ func (r *accountRepository) UpdateWithAccountBillingSettings(
 	probeEnabled *bool,
 	rateSyncEnabled *bool,
 	rateMultiplier *float64,
+	intelligenceAutoPauseEnabled *bool,
 ) error {
-	return r.updateAccount(ctx, account, probeEnabled, rateSyncEnabled, rateMultiplier)
+	return r.updateAccount(ctx, account, probeEnabled, rateSyncEnabled, rateMultiplier, intelligenceAutoPauseEnabled)
 }
 
 func (r *accountRepository) updateAccount(
@@ -471,6 +473,7 @@ func (r *accountRepository) updateAccount(
 	explicitProbeEnabled *bool,
 	explicitRateSyncEnabled *bool,
 	explicitRateMultiplier *float64,
+	explicitIntelligenceAutoPauseEnabled *bool,
 ) error {
 	if account == nil {
 		return nil
@@ -502,6 +505,7 @@ func (r *accountRepository) updateAccount(
 		explicitProbeEnabled,
 		explicitRateSyncEnabled,
 		explicitRateMultiplier,
+		explicitIntelligenceAutoPauseEnabled,
 	)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrAccountNotFound, nil)
@@ -531,12 +535,17 @@ func (r *accountRepository) updateLockedAccount(
 	explicitProbeEnabled *bool,
 	explicitRateSyncEnabled *bool,
 	explicitRateMultiplier *float64,
+	explicitIntelligenceAutoPauseEnabled *bool,
 ) (*dbent.Account, error) {
 	extra, err := lockAndMergeAccountProbeExtra(ctx, client, account, explicitProbeEnabled, explicitRateSyncEnabled)
 	if err != nil {
 		return nil, err
 	}
 	account.Extra = extra
+	if explicitIntelligenceAutoPauseEnabled != nil {
+		service.ApplyIntelligenceAutoPauseSetting(account, *explicitIntelligenceAutoPauseEnabled)
+		extra = account.Extra
+	}
 
 	schedulable := account.Schedulable
 	if account.Status == service.StatusError {
@@ -682,7 +691,8 @@ func lockAndMergeAccountProbeExtra(
 			extra -> 'opencode_go_usage_auto_refresh',
 			extra -> 'opencode_go_usage_snapshot',
 			extra -> 'grok_observed_models',
-			extra -> 'upstream_model_metadata'
+			extra -> 'upstream_model_metadata',
+			jsonb_build_object('extra',extra,'schedulable',schedulable)
 		FROM accounts
 		WHERE id = $1 AND deleted_at IS NULL
 		FOR NO KEY UPDATE
@@ -713,6 +723,7 @@ func lockAndMergeAccountProbeExtra(
 		currentOpenCodeSnapshot        []byte
 		currentGrokObservedModels      []byte
 		currentUpstreamModelMetadata   []byte
+		currentIntelligenceState       []byte
 	)
 	if err := rows.Scan(
 		&identityUnchanged,
@@ -729,6 +740,7 @@ func lockAndMergeAccountProbeExtra(
 		&currentOpenCodeSnapshot,
 		&currentGrokObservedModels,
 		&currentUpstreamModelMetadata,
+		&currentIntelligenceState,
 	); err != nil {
 		return nil, err
 	}
@@ -737,6 +749,34 @@ func lockAndMergeAccountProbeExtra(
 	}
 
 	extra := copyJSONMap(normalizeJSONMap(account.Extra))
+	if account.SupportsIntelligenceScheduling() && len(currentIntelligenceState) > 0 {
+		var current struct {
+			Extra       map[string]any `json:"extra"`
+			Schedulable bool           `json:"schedulable"`
+		}
+		if err := json.Unmarshal(currentIntelligenceState, &current); err != nil {
+			return nil, err
+		}
+		wasAutoPaused, _ := account.Extra[service.IntelligenceAutoPauseExtraKey].(bool)
+		isAutoPaused, _ := current.Extra[service.IntelligenceAutoPauseExtraKey].(bool)
+		if wasAutoPaused != isAutoPaused || account.Extra[service.IntelligenceSchedulingGenerationExtraKey] != current.Extra[service.IntelligenceSchedulingGenerationExtraKey] {
+			account.Schedulable = current.Schedulable
+		}
+		for _, key := range []string{service.IntelligenceAutoPauseEnabledExtraKey, service.IntelligenceSchedulingGenerationExtraKey, service.IntelligenceAutoPauseExtraKey} {
+			delete(extra, key)
+			if value, ok := current.Extra[key]; ok {
+				extra[key] = value
+			}
+		}
+		// Keep results produced after the form was loaded unless its identity/route changed.
+		candidate := *account
+		candidate.Extra = copyJSONMap(extra)
+		candidate.Extra[service.OpenAICodexStateProbeSnapshotExtraKey] = current.Extra[service.OpenAICodexStateProbeSnapshotExtraKey]
+		if identityUnchanged && service.OpenAICodexStateProbeSnapshotFromAccount(&candidate) != nil {
+			extra[service.OpenAICodexStateProbeSnapshotExtraKey] = current.Extra[service.OpenAICodexStateProbeSnapshotExtraKey]
+		}
+	}
+
 	for _, key := range []string{
 		service.UpstreamBillingProbeEnabledExtraKey,
 		service.UpstreamBillingRateSyncEnabledExtraKey,
@@ -2728,21 +2768,7 @@ func (r *accountRepository) UpdateSessionWindowEnd(ctx context.Context, id int64
 }
 
 func (r *accountRepository) SetSchedulable(ctx context.Context, id int64, schedulable bool) error {
-	if scoped := r.accountTransactionScope(ctx); scoped != r {
-		return scoped.SetSchedulable(ctx, id, schedulable)
-	}
-	_, err := clientFromContext(ctx, r.client).ExecContext(ctx,
-		"UPDATE accounts SET schedulable=$1, extra=COALESCE(extra,'{}'::jsonb)-'intelligence_auto_paused', updated_at=NOW() WHERE id=$2 AND deleted_at IS NULL", schedulable, id)
-	if err != nil {
-		return err
-	}
-	if err := enqueueSchedulerOutbox(ctx, r.sql, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
-		logger.LegacyPrintf("repository.account", "[SchedulerOutbox] enqueue schedulable change failed: account=%d err=%v", id, err)
-	}
-	if !schedulable {
-		r.syncSchedulerAccountSnapshot(ctx, id)
-	}
-	return nil
+	return r.setManualSchedulable(ctx, id, schedulable)
 }
 
 func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now time.Time) (int64, error) {
@@ -3271,7 +3297,10 @@ func (r *accountRepository) BulkUpdate(ctx context.Context, ids []int64, updates
 			extraExpression = ensureCodexFingerprintSeedSQL(extraExpression)
 		}
 		if updates.Schedulable != nil {
-			extraExpression = "(" + extraExpression + ") - 'intelligence_auto_paused'"
+			generation := "$" + itoa(idx)
+			args = append(args, uuid.NewString())
+			idx++
+			extraExpression = intelligenceManualSchedulingExtraSQL(extraExpression, generation)
 		}
 		setClauses = append(setClauses, "extra = "+extraExpression)
 	}

@@ -100,9 +100,17 @@ it('reports the scheduling pause alongside the persisted verdict', async () => {
   expect(wrapper.emitted('updated')).toEqual([[failed, true]])
 })
 
-it('reports automatic recovery without reopening a manual pause', async () => {
+it('does not enable scheduling in response to a legacy automatic-recovery flag', async () => {
   probe.mockResolvedValue({ snapshot: healthy, scheduling_resumed: true })
   const wrapper=render()
   await wrapper.get('button').trigger('click');await flushPromises()
-  expect(wrapper.emitted('updated')).toEqual([[healthy,false]])
+  expect(wrapper.emitted('updated')).toEqual([[healthy]])
 })
+
+ it('ignores a delayed pause response after a newer manual scheduling choice', async () => {
+  probe.mockResolvedValue({ snapshot: { ...healthy, scheduling_generation: 'old' }, scheduling_paused: true })
+  const wrapper = render({ ...account(), schedulable: true, extra: { intelligence_scheduling_generation: 'new', intelligence_auto_pause_enabled: false } })
+  await wrapper.get('button').trigger('click')
+  await flushPromises()
+  expect(wrapper.emitted('updated')).toBeUndefined()
+ })

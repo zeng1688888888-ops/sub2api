@@ -32,7 +32,7 @@
       </span>
     </template>
 
-    <AccountIntelligenceIndicator :account="account" @updated="(snapshot, paused) => emit('intelligence-updated', { ...account, openai_codex_state_probe: snapshot, ...(paused === undefined ? {} : { schedulable: !paused }) })" />
+    <AccountIntelligenceIndicator :account="account" @updated="(snapshot, paused) => emit('intelligence-updated', applyIntelligenceSnapshot(account, snapshot, paused))" />
 
     <!-- Error Info Indicator -->
     <div v-if="hasError && account.error_message" class="group/error relative">
@@ -161,6 +161,7 @@
 </template>
 
 <script setup lang="ts">
+import { applyIntelligenceSnapshot } from '@/utils/accountIntelligence'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'

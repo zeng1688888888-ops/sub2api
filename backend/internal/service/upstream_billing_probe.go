@@ -105,15 +105,16 @@ type UpstreamBillingProbeSettings struct {
 // UpstreamBillingProbeSnapshot is persisted in accounts.extra. Data is kept as
 // a sanitized map so future response fields do not require a database change.
 type UpstreamBillingProbeSnapshot struct {
-	Status        string         `json:"status"`
-	Data          map[string]any `json:"data,omitempty"`
-	ReceivedAt    *time.Time     `json:"received_at,omitempty"`
-	FreshUntil    *time.Time     `json:"fresh_until,omitempty"`
-	LastAttemptAt time.Time      `json:"last_attempt_at"`
-	NextProbeAt   time.Time      `json:"next_probe_at"`
-	FailureCount  int            `json:"failure_count,omitempty"`
-	HTTPStatus    int            `json:"http_status,omitempty"`
-	LastError     string         `json:"last_error,omitempty"`
+	Balance       *UpstreamBalanceProbeSnapshot `json:"balance,omitempty"`
+	Status        string                        `json:"status"`
+	Data          map[string]any                `json:"data,omitempty"`
+	ReceivedAt    *time.Time                    `json:"received_at,omitempty"`
+	FreshUntil    *time.Time                    `json:"fresh_until,omitempty"`
+	LastAttemptAt time.Time                     `json:"last_attempt_at"`
+	NextProbeAt   time.Time                     `json:"next_probe_at"`
+	FailureCount  int                           `json:"failure_count,omitempty"`
+	HTTPStatus    int                           `json:"http_status,omitempty"`
+	LastError     string                        `json:"last_error,omitempty"`
 	// SyncedRateMultiplier records the value this probe wrote into
 	// accounts.rate_multiplier. It is only set when the account opted into rate
 	// sync and the declared value passed the write-back range check, so the
@@ -715,6 +716,10 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 		NextProbeAt:   now.Add(nextProbeDelay(intervalMinutes, 0)),
 		HTTPStatus:    resp.StatusCode,
 	}
+	// Release the first response before acquiring transport resources for the next request.
+	_ = resp.Body.Close()
+	// The wallet read is independent: failure must not invalidate a valid rate.
+	snapshot.Balance = s.probeUpstreamWalletBalance(probeCtx, account, req, normalizedBaseURL, proxyURL, tlsProfile, intervalMinutes)
 	// 账号级值域与精度只在真要写回时才有影响：只观察上游声明、未开启同步的
 	// 账号不因声明值不适配 accounts.rate_multiplier 而被记成探测失败并进入
 	// 指数退避——探测本身成功了，原始声明照常存进快照供展示。
@@ -781,6 +786,9 @@ func (s *UpstreamBillingProbeService) persistProbeFailure(
 	}
 	if previous != nil {
 		snapshot.Data = previous.Data
+		if previous.Balance != nil {
+			snapshot.Balance = upstreamBalanceProbeFailure(previous.Balance, now, UpstreamBillingProbeStatusFailed, "billing_probe_failed")
+		}
 		snapshot.ReceivedAt = previous.ReceivedAt
 		snapshot.FreshUntil = previous.FreshUntil
 		if snapshot.FreshUntil == nil && previous.Status == UpstreamBillingProbeStatusOK && previous.ReceivedAt != nil {

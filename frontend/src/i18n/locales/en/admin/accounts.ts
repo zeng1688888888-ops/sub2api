@@ -1,5 +1,13 @@
 export default {
     accounts: {
+      intelligenceScheduling: {
+        "autoPauseLabel": "Pause scheduling after two failed intelligence tests",
+        "autoPauseHint": "Off by default. Intelligence and pelican tests continue as usual. When enabled, two consecutive failed intelligence answers pause scheduling; network errors do not count. Enabling scheduling is always manual, including after turning this option off.",
+        "enabled": "Intelligence auto-pause",
+        "monitorOnly": "Tests only",
+        "paused": "Intelligence test failed; enable manually",
+        "enableManually": "Enable manually"
+      },
       svgProbe: {
   "column": "Pelican test",
   "settings": "Pelican test settings",
@@ -38,7 +46,7 @@ export default {
   "routePool": "Network: concurrency proxy pool",
   "routeDefault": "Network: account default (single proxy / ordinary network)",
   "autoLabel": "Auto · every 8 min",
-  "autoHint": "Intelligence and pelican tests run automatically for active GPT accounts eight minutes after completion. Due tasks are checked every 15 seconds and may queue when busy. Manual testing remains available. Two consecutive failed answers pause scheduling; network errors do not count. Tests continue while paused; two consecutive passes resume automatically paused accounts only. Manual pauses are never automatically reopened."
+  "autoHint": "Intelligence and pelican tests run eight minutes after completion, with due tasks checked every 15 seconds. By default, results never pause scheduling. Opt in to pausing after two consecutive failed intelligence answers in the add/edit account form; network errors do not count. Testing continues while paused, and scheduling must be enabled manually. Both tests are skipped while quota is exhausted, rate limits or cooldowns are active, or the account is unavailable. They resume when quota resets or refreshed usage is available; a manual scheduling pause alone does not stop testing."
 },
       egressPool: {
   "title": "Multiple egresses",
@@ -390,6 +398,14 @@ export default {
         }
       },
       upstreamBilling: {
+        balance: "Balance",
+        balanceUnknown: "Not fetched",
+        balanceNotProvided: "Not provided",
+        balanceFailed: "Fetch failed",
+        balanceHistorical: "Previous",
+        balanceHint: "Wallet balance reported by the upstream account, refreshed together with its rate. This is not a local account limit or an API key allowance.",
+        balanceRestrictedHint: "The upstream only exposes a key or subscription allowance, not an account wallet balance.",
+        balanceHistoricalHint: "This is the last successful balance. It has expired or the refresh failed; refresh to confirm.",
         trustWarning: 'This rate is declared by the upstream site for the current API key. Sub2API cannot verify that it matches actual charges. The upstream site or an intermediary may return forged, stale, or modified data. Verify it against bills, balance changes, and actual usage.',
         autoProbe: 'Automatically probe upstream declared rate',
         autoProbeHint: 'Refresh the upstream declared rate on the global interval. This switch alone does not change the account rate.',
@@ -397,7 +413,7 @@ export default {
         syncRateHint: 'Update the account rate after each successful probe, using the base rate excluding peak hours. Failed probes or declarations outside the allowed range leave it unchanged. Enabling this also turns on "Automatically probe upstream declared rate".',
         syncRateManagedHint: 'The current rate is maintained automatically from the upstream declared base rate (excluding peak hours).',
         syncedRateTooltip: 'This account rate is synchronized from the upstream declared base rate (excluding peak hours)',
-        manualProbe: 'Probe upstream rate now',
+        manualProbe: 'Refresh upstream rate and balance',
         stale: 'Stale',
         unsupported: 'Unsupported',
         failed: 'Failed',

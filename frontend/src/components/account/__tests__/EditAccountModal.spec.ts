@@ -336,6 +336,40 @@ describe('EditAccountModal', () => {
 
   afterEach(() => vi.useRealTimers())
 
+  it.each([undefined, true, false])('loads intelligence auto-pause (%s) and omits it on an unrelated save', async enabled => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = enabled === undefined ? {} : { intelligence_auto_pause_enabled: enabled }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="intelligence-auto-pause-toggle"]').attributes('aria-checked')).toBe(String(enabled === true))
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.intelligence_auto_pause_enabled).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it.each([true, false])('saves an explicit intelligence auto-pause change from %s', async enabled => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = { intelligence_auto_pause_enabled: enabled }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="intelligence-auto-pause-toggle"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.intelligence_auto_pause_enabled).toBe(!enabled)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.schedulable).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('hides intelligence auto-pause for API key accounts', () => {
+    const wrapper = mountModal()
+    expect(wrapper.find('[data-testid="intelligence-auto-pause-toggle"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('passes existing non-identity mappings to the whitelist selector and preserves them on save', async () => {
     const account = buildAccount()
     account.credentials.model_mapping = { 'gpt-5.2': 'gpt-5.2', 'gpt-latest': 'deepseek-chat' }

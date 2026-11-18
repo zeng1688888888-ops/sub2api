@@ -20,9 +20,10 @@ func (r *upstreamBillingProbeAdminRepo) ListShadowsByParent(context.Context, int
 
 type accountBillingSettingsAdminRepo struct {
 	*upstreamBillingProbeAccountRepo
-	concurrentRate   *float64
-	lastExplicitRate *float64
-	updateCalls      int
+	concurrentRate            *float64
+	lastExplicitRate          *float64
+	lastIntelligenceAutoPause *bool
+	updateCalls               int
 }
 
 func (r *accountBillingSettingsAdminRepo) UpdateWithAccountBillingSettings(
@@ -31,6 +32,7 @@ func (r *accountBillingSettingsAdminRepo) UpdateWithAccountBillingSettings(
 	probeEnabled *bool,
 	rateSyncEnabled *bool,
 	rateMultiplier *float64,
+	intelligenceAutoPauseEnabled *bool,
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -44,6 +46,10 @@ func (r *accountBillingSettingsAdminRepo) UpdateWithAccountBillingSettings(
 	updated.Extra = mergeMap(nil, account.Extra)
 	if updated.Extra == nil {
 		updated.Extra = make(map[string]any)
+	}
+	r.lastIntelligenceAutoPause = intelligenceAutoPauseEnabled
+	if intelligenceAutoPauseEnabled != nil {
+		ApplyIntelligenceAutoPauseSetting(&updated, *intelligenceAutoPauseEnabled)
 	}
 	if probeEnabled != nil {
 		updated.Extra[UpstreamBillingProbeEnabledExtraKey] = *probeEnabled

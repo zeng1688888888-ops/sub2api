@@ -14,8 +14,7 @@ import (
 // a usable turn ticket.
 const OpenAICodexStateProbeSnapshotExtraKey = "openai_codex_state_probe"
 const IntelligenceAutoPauseExtraKey = "intelligence_auto_paused"
-const IntelligencePauseReason = " 连续两次明确未通过，已自动暂停调度；连续两次通过后自动恢复。"
-const IntelligenceResumeReason = " 连续两次明确通过，已自动恢复调度。"
+const IntelligencePauseReason = " 连续两次明确未通过，已自动暂停调度；请手动开启调度。"
 
 type IntelligenceSchedulingTransition struct {
 	Paused  bool
@@ -30,13 +29,14 @@ const (
 
 // Intelligence results and an automatic pause must be persisted together.
 type intelligenceProbeSnapshotWriter interface {
-	UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool, bool) (IntelligenceSchedulingTransition, error)
+	UpdateIntelligenceProbeSnapshot(context.Context, int64, *OpenAICodexStateProbeSnapshot, bool) (IntelligenceSchedulingTransition, error)
 }
 
 // OpenAICodexStateProbeSnapshot is the compact account-level state projected
 // into the admin account list. History stores only decisive verdicts and is
 // bounded so a long-lived account cannot grow its JSONB value without limit.
 type OpenAICodexStateProbeSnapshot struct {
+	SchedulingGeneration string                         `json:"scheduling_generation,omitempty"`
 	Method               string                         `json:"method,omitempty"`
 	Route                string                         `json:"route,omitempty"`
 	Answer               string                         `json:"answer,omitempty"`
@@ -120,6 +120,11 @@ func (s *AccountTestService) persistOpenAICodexStateProbeResult(
 		snapshot.History = make([]OpenAICodexStateProbeVerdict, 0, openAICodexStateProbeHistoryLimit)
 	}
 
+	if snapshot.SchedulingGeneration != account.IntelligenceSchedulingGeneration() {
+		snapshot.ConsecutiveHealthy = 0
+		snapshot.ConsecutiveDegraded = 0
+	}
+	snapshot.SchedulingGeneration = account.IntelligenceSchedulingGeneration()
 	snapshot.Method = result.Method
 	snapshot.Route = result.Route
 	snapshot.Answer = result.Answer
@@ -181,34 +186,25 @@ func (s *AccountTestService) persistOpenAICodexStateProbeResult(
 		snapshot.HealthRate = nil
 	}
 
-	eligible := result.Method == openAIIntelligenceProbeMethod && account.Platform == PlatformOpenAI && account.IsOpenAIOAuthLike() && !account.IsShadow() && !account.IsSyntheticUITest() && !account.IsOpenAIAgentIdentity()
+	eligible := result.Method == openAIIntelligenceProbeMethod && account.SupportsIntelligenceScheduling()
 	pause := eligible && result.Verdict == OpenAICodexStateDegraded && snapshot.ConsecutiveDegraded >= 2
-	resume := eligible && result.Verdict == OpenAICodexStateHealthy && snapshot.ConsecutiveHealthy >= 2
 	var transition IntelligenceSchedulingTransition
 	var err error
 	if writer, ok := s.accountRepo.(intelligenceProbeSnapshotWriter); ok {
-		transition, err = writer.UpdateIntelligenceProbeSnapshot(ctx, account.ID, snapshot, pause, resume)
+		transition, err = writer.UpdateIntelligenceProbeSnapshot(ctx, account.ID, snapshot, pause)
 	} else {
-		owned, _ := account.Extra[IntelligenceAutoPauseExtraKey].(bool)
-		transition.Paused = pause && account.Schedulable
-		transition.Resumed = resume && owned && !account.Schedulable && account.IsActive()
+		transition.Paused = pause && account.Schedulable && account.IntelligenceAutoPauseEnabled()
+		updates := map[string]any{OpenAICodexStateProbeSnapshotExtraKey: snapshot}
 		if transition.Paused {
 			snapshot.Reason += IntelligencePauseReason
-			owned = true
+			updates[IntelligenceAutoPauseExtraKey] = true
+			err = s.accountRepo.SetSchedulable(ctx, account.ID, false)
 		}
-		if transition.Resumed {
-			snapshot.Reason += IntelligenceResumeReason
-			owned = false
-		}
-		updates := map[string]any{OpenAICodexStateProbeSnapshotExtraKey: snapshot}
-		if transition.Paused || transition.Resumed {
-			updates[IntelligenceAutoPauseExtraKey] = owned
-		}
-		err = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
-		if err == nil && (transition.Paused || transition.Resumed) {
-			err = s.accountRepo.SetSchedulable(ctx, account.ID, transition.Resumed)
+		if err == nil {
+			err = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 		}
 	}
+
 	if err != nil {
 		return err
 	}

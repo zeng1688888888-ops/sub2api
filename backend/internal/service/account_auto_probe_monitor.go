@@ -46,7 +46,7 @@ func (s *UpstreamBillingProbeService) runAccountProbeLoop(name string, run func(
 }
 
 func accountSVGProbeDue(a *Account, now time.Time) bool {
-	if a == nil || a.Platform != PlatformOpenAI || !a.IsOpenAIOAuthLike() || !a.IsActive() || a.IsShadow() || a.IsSyntheticUITest() {
+	if !AccountAutomaticProbeAvailable(a, now) {
 		return false
 	}
 	result := AccountSVGProbeFromAccount(a)

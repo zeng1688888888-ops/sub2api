@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }))
 vi.mock('@/api/client', () => ({ apiClient: { post } }))
-import { probeOpenAIAccountIntelligence } from '@/api/admin/accounts'
+import { probeOpenAIAccountIntelligence, setSchedulable } from '@/api/admin/accounts'
 
 describe('account intelligence API', () => {
   beforeEach(() => { post.mockReset() })
@@ -22,3 +22,11 @@ describe('account intelligence API', () => {
     expect(post.mock.calls[0]?.[1]).toEqual({ model_id: undefined })
   })
 })
+
+ it('enables scheduling without changing intelligence settings', async () => {
+  post.mockResolvedValue({ data: { id: 7 } })
+  await setSchedulable(7, true)
+  expect(post).toHaveBeenLastCalledWith('/admin/accounts/7/schedulable', { schedulable: true })
+  await setSchedulable(7, false)
+  expect(post).toHaveBeenLastCalledWith('/admin/accounts/7/schedulable', { schedulable: false })
+ })

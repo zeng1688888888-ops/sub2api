@@ -201,16 +201,24 @@ func (s *AccountTestService) probeAccountSVG(ctx context.Context, id int64, only
 		return nil, infraerrors.Conflict("SVG_PROBE_BUSY", "该账号正在进行SVG测试")
 	}
 	defer s.svgProbeAccounts.Delete(id)
-	if onlyDue {
-		// Re-read after acquiring the per-account guard: a manual probe may just have finished.
-		a, err = s.accountRepo.GetByID(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if !accountSVGProbeDue(a, time.Now()) {
+	// Re-read under the guard before any upstream request, including manual tests.
+	a, err = s.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if a == nil {
+		return nil, ErrAccountNotFound
+	}
+	if reason := accountProbeUnavailableReason(a, time.Now()); reason != "" {
+		if onlyDue {
 			return nil, nil
 		}
+		return nil, infraerrors.Conflict("ACCOUNT_PROBE_UNAVAILABLE", reason)
 	}
+	if onlyDue && !accountSVGProbeDue(a, time.Now()) {
+		return nil, nil
+	}
+
 	s.svgProbeSlotsOnce.Do(func() { s.svgProbeSlots = make(chan struct{}, 2) })
 	select {
 	case s.svgProbeSlots <- struct{}{}:

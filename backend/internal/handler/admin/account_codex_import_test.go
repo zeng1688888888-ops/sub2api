@@ -1093,3 +1093,26 @@ func buildCodexImportTestJWT(t *testing.T, exp time.Time, extraClaims map[string
 	}
 	return base64.RawURLEncoding.EncodeToString(headerBytes) + "." + base64.RawURLEncoding.EncodeToString(claimBytes) + "."
 }
+
+func TestImportCodexSessionsIntelligenceSettingRequiresExplicitChoice(t *testing.T) {
+	for _, choice := range []any{nil, false, true} {
+		token := buildCodexAccessToken(t, "workspace-intelligence", "user-intelligence", time.Now().Add(time.Hour))
+		svc := newCodexImportMemoryAdminService([]service.Account{{ID: 17, Name: "existing", Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Credentials: map[string]any{"chatgpt_account_id": "workspace-intelligence", "chatgpt_user_id": "user-intelligence", "access_token": token}, Extra: map[string]any{service.IntelligenceAutoPauseEnabledExtraKey: true}}})
+		handler := NewAccountHandler(svc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		req := CodexSessionImportRequest{SkipDefaultGroupBind: boolPtr(true)}
+		if choice != nil {
+			req.Extra = map[string]any{service.IntelligenceAutoPauseEnabledExtraKey: choice}
+		}
+		result, err := handler.importCodexSessions(context.Background(), req, []codexImportEntry{{Index: 1, Value: map[string]any{"access_token": token}}})
+		if err != nil || result.Updated != 1 || len(svc.updatedAccounts) != 1 {
+			t.Fatalf("result=%+v err=%v", result, err)
+		}
+		got, present := svc.updatedAccounts[0].input.Extra[service.IntelligenceAutoPauseEnabledExtraKey]
+		if choice == nil && present {
+			t.Fatal("untouched imports must leave the setting to the current database row")
+		}
+		if choice != nil && got != choice {
+			t.Fatalf("setting=%v, want %v", got, choice)
+		}
+	}
+}

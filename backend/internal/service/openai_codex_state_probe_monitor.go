@@ -77,17 +77,20 @@ func (s *UpstreamBillingProbeService) RunOpenAICodexStateProbeDue(ctx context.Co
 }
 
 func (s *UpstreamBillingProbeService) listDueOpenAICodexStateProbeAccounts(ctx context.Context, now time.Time) ([]Account, error) {
+	var accounts []Account
+	var err error
 	if lister, ok := s.accountRepo.(openAICodexStateProbeDueLister); ok {
-		return lister.ListDueOpenAICodexStateProbeAccounts(ctx, now, openAICodexStateProbeMonitorMaxPerCycle)
+		accounts, err = lister.ListDueOpenAICodexStateProbeAccounts(ctx, now, openAICodexStateProbeMonitorMaxPerCycle)
+	} else {
+		accounts, err = s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
 	}
-	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformOpenAI)
 	if err != nil {
 		return nil, err
 	}
 	due := make([]Account, 0, len(accounts))
 	for i := range accounts {
 		account := accounts[i]
-		if !account.IsOpenAIOAuthLike() || !account.IsActive() || account.IsShadow() || account.IsSyntheticUITest() {
+		if !AccountAutomaticProbeAvailable(&account, now) {
 			continue
 		}
 		snapshot := OpenAICodexStateProbeSnapshotFromAccount(&account)

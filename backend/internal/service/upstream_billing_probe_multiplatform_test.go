@@ -108,7 +108,7 @@ func TestUpstreamBillingProbeGrokAccountPersistsSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
 	require.Equal(t, 0.02, snapshot.Data["resolved_rate_multiplier"])
-	require.Equal(t, "https://relay.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "https://relay.example/v1/sub2api/billing", upstream.requests[0].URL.String())
 	require.Equal(t, "Bearer sk-grok-relay", upstream.lastReq.Header.Get("Authorization"))
 	// 非 OpenAI 平台探测使用默认传输画像。
 	require.Equal(t, HTTPUpstreamProfileDefault, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
@@ -256,7 +256,7 @@ func TestUpstreamBillingProbeOpenAIDefaultBaseURLPreserved(t *testing.T) {
 
 	_, err := svc.ProbeAccount(context.Background(), account.ID)
 	require.NoError(t, err)
-	require.Equal(t, "https://api.openai.com/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "https://api.openai.com/v1/sub2api/billing", upstream.requests[0].URL.String())
 	require.Equal(t, HTTPUpstreamProfileOpenAI, HTTPUpstreamProfileFromContext(upstream.lastReq.Context()))
 }
 

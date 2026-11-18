@@ -161,6 +161,10 @@ type upstreamBillingProbeHTTPStub struct {
 }
 
 func (u *upstreamBillingProbeHTTPStub) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	if strings.HasSuffix(req.URL.Path, "/usage") {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"mode":"unrestricted","isValid":true,"balance":100,"unit":"USD"}`))}, nil
+	}
+	// Count billing probes, not the accompanying wallet read.
 	u.calls.Add(1)
 	active := u.active.Add(1)
 	defer u.active.Add(-1)
@@ -330,7 +334,7 @@ func TestUpstreamBillingProbeSuccessPersistsSanitizedSnapshot(t *testing.T) {
 	require.Equal(t, 0.6, *account.RateMultiplier)
 	require.NotNil(t, snapshot.SyncedRateMultiplier)
 	require.Equal(t, 0.6, *snapshot.SyncedRateMultiplier)
-	require.Equal(t, "https://upstream.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "https://upstream.example/v1/sub2api/billing", upstream.requests[0].URL.String())
 	require.Equal(t, http.MethodGet, upstream.lastReq.Method)
 	require.Equal(t, "Bearer sk-sensitive", upstream.lastReq.Header.Get("Authorization"))
 	require.True(t, HTTPUpstreamRedirectsDisabled(upstream.lastReq.Context()))
@@ -369,7 +373,7 @@ func TestUpstreamBillingProbeAdaptiveCNUsesChatProtocolBaseURL(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, UpstreamBillingProbeStatusOK, snapshot.Status)
-	require.Equal(t, "https://chat-relay.example/v1/sub2api/billing", upstream.lastReq.URL.String())
+	require.Equal(t, "https://chat-relay.example/v1/sub2api/billing", upstream.requests[0].URL.String())
 }
 
 func TestUpstreamBillingProbeSyncsResolvedRateForAllAPIKeyPlatforms(t *testing.T) {

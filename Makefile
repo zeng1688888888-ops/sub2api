@@ -2,6 +2,11 @@
 
 FRONTEND_CRITICAL_VITEST := \
 	src/components/account/__tests__/AccountIntelligenceIndicator.spec.ts \
+	src/views/admin/__tests__/AccountsView.schedulerScore.spec.ts \
+	src/utils/__tests__/accountIntelligence.spec.ts \
+	src/components/account/__tests__/UpstreamBillingRateCell.spec.ts \
+	src/components/account/__tests__/AccountSchedulingControl.spec.ts \
+	src/api/__tests__/admin.accounts.intelligenceProbe.spec.ts \
 	src/components/account/__tests__/AccountSVGProbe.spec.ts \
 	src/components/account/__tests__/AccountEgressPool.spec.ts \
 	src/components/admin/usage/__tests__/UsageTable.spec.ts \

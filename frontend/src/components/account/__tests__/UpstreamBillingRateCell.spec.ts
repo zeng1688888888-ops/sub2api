@@ -357,4 +357,61 @@ describe('UpstreamBillingRateCell', () => {
     )
     expect(wrapper.text()).not.toContain('-admin.accounts.upstreamBilling.unsupported')
   })
+  const walletAccount = (balance: Record<string, unknown> = {}, snapshot: Record<string, unknown> = {}) => makeAccount({
+    extra: { upstream_billing_probe: {
+      status: 'ok', data: billingData,
+      received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-13T01:00:00Z',
+      last_attempt_at: '2026-07-13T00:00:00Z', next_probe_at: '2026-07-13T00:30:00Z',
+      balance: { status: 'ok', amount: 8465.83, currency: 'USD', received_at: '2026-07-13T00:00:00Z', fresh_until: '2026-07-13T01:00:00Z', last_attempt_at: '2026-07-13T00:00:00Z', ...balance },
+      ...snapshot,
+    } },
+  })
+
+  it('displays upstream wallet balance below the rate and refreshes both with one action', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account: walletAccount(), now: Date.now() } })
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.60x')
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toBe('$8,465.83')
+    expect(wrapper.get('[data-testid="upstream-wallet-balance"]').attributes('title')).toContain('upstreamBilling.balanceHint')
+    expect(wrapper.find('[data-testid="upstream-wallet-balance-outdated"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="upstream-billing-probe"]').trigger('click')
+    expect(wrapper.emitted('probe')).toHaveLength(1)
+    await wrapper.setProps({ account: walletAccount({ amount: 8400 }) })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toBe('$8,400.00')
+  })
+
+  it.each([[0, '$0.00'], [-2.5, '-$2.50']])('displays a real zero or negative wallet balance (%s)', (amount, text) => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account: walletAccount({ amount }), now: Date.now() } })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toBe(text)
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').classes()).toContain('text-red-600')
+  })
+
+  it('does not present stale or failed refresh data as a current balance', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account: walletAccount(), now: Date.parse('2026-07-13T01:00:01Z') } })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toBe('$8,465.83')
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-outdated"]').exists()).toBe(true)
+    await wrapper.setProps({ account: walletAccount({ status: 'failed', last_error: 'http_error' }), now: Date.now() })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-outdated"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="upstream-wallet-balance"]').attributes('title')).toContain('balanceFailed')
+    expect(wrapper.get('[data-testid="upstream-billing-rate"]').text()).toBe('0.60x')
+  })
+
+  it('distinguishes unknown, unsupported and failed balances without making up zero', async () => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account: walletAccount({}, { balance: undefined }), now: Date.now() } })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toContain('balanceUnknown')
+    await wrapper.setProps({ account: walletAccount({ status: 'unsupported', last_error: 'key_quota_only' }) })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toContain('balanceNotProvided')
+    expect(wrapper.get('[data-testid="upstream-wallet-balance"]').attributes('title')).toContain('balanceRestrictedHint')
+    await wrapper.setProps({ account: walletAccount({ status: 'failed', amount: undefined }) })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toContain('balanceFailed')
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).not.toContain('$0.00')
+  })
+
+  it.each([
+    { amount: NaN }, { amount: Infinity }, { amount: '8465.83' }, { currency: '<script>' },
+    { received_at: 'invalid' }, { received_at: '2026-07-13T01:00:00Z' }, { fresh_until: 'invalid' },
+  ])('keeps malformed wallet data neutral: %j', (balance) => {
+    const wrapper = mount(UpstreamBillingRateCell, { props: { account: walletAccount(balance), now: Date.now() } })
+    expect(wrapper.get('[data-testid="upstream-wallet-balance-value"]').text()).toContain('balanceUnknown')
+  })
+
 })

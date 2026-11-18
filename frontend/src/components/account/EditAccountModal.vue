@@ -2752,6 +2752,12 @@
         </div>
       </div>
 
+      <IntelligenceAutoPauseField
+        v-if="account && supportsIntelligenceScheduling(account)"
+        v-model="intelligenceAutoPauseEnabled"
+        @update:model-value="intelligenceAutoPauseTouched = true"
+      />
+
       <div>
         <div class="flex items-center justify-between">
           <div>
@@ -3426,6 +3432,8 @@
 </template>
 
 <script setup lang="ts">
+import IntelligenceAutoPauseField from './IntelligenceAutoPauseField.vue'
+import { supportsIntelligenceScheduling } from '@/utils/accountIntelligence'
 import { ref, reactive, computed, watch, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4129,6 +4137,8 @@ const loadGrokMediaEligibility = async (accountID: number): Promise<GrokMediaEli
 }
 
 const interceptWarmupRequests = ref(false)
+const intelligenceAutoPauseEnabled = ref(false)
+const intelligenceAutoPauseTouched = ref(false)
 const autoPauseOnExpired = ref(false)
 const autoPause5hThreshold = ref<number | null>(null)
 const autoPause7dThreshold = ref<number | null>(null)
@@ -4674,6 +4684,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   // Load intercept warmup requests setting (applies to all account types)
   const credentials = newAccount.credentials as Record<string, unknown> | undefined
   interceptWarmupRequests.value = credentials?.intercept_warmup_requests === true
+  intelligenceAutoPauseEnabled.value = newAccount.extra?.intelligence_auto_pause_enabled === true
+  intelligenceAutoPauseTouched.value = false
   autoPauseOnExpired.value = newAccount.auto_pause_on_expired === true
   editVertexProjectId.value = ''
   editVertexClientEmail.value = ''
@@ -6263,6 +6275,11 @@ const handleSubmit = async () => {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
+      // Omit untouched policy so an unrelated edit preserves the database's current choice.
+      delete newExtra.intelligence_auto_pause_enabled
+      if (supportsIntelligenceScheduling(props.account) && intelligenceAutoPauseTouched.value) {
+        newExtra.intelligence_auto_pause_enabled = intelligenceAutoPauseEnabled.value
+      }
       if (props.account.type === 'oauth' && !isSparkShadow.value && excelBPSEnabled.value) {
         newExtra.openai_excel_bps = true
       } else {

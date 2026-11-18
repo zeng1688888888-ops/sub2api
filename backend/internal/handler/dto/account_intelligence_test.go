@@ -13,7 +13,9 @@ func TestAccountIntelligenceSnapshotFullAndLite(t *testing.T) {
 			rate := 100.0
 			account := &service.Account{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
 				Extra: map[string]any{
-					"openai_excel_bps": route == "bps",
+					"openai_excel_bps":                               route == "bps",
+					service.IntelligenceAutoPauseEnabledExtraKey:     true,
+					service.IntelligenceSchedulingGenerationExtraKey: "manual-choice",
 					service.OpenAICodexStateProbeSnapshotExtraKey: &service.OpenAICodexStateProbeSnapshot{
 						Method: "candy", Route: route, Model: "gpt-6-astra", Verdict: service.OpenAICodexStateHealthy,
 						HealthRate: &rate, SampleCount: 1,
@@ -25,6 +27,8 @@ func TestAccountIntelligenceSnapshotFullAndLite(t *testing.T) {
 			require.Equal(t, route, full.OpenAICodexStateProbe.Route)
 			lite := AccountListItemFromAccount(full)
 			require.Equal(t, full.OpenAICodexStateProbe, lite.OpenAICodexStateProbe)
+			require.Equal(t, true, lite.Extra[service.IntelligenceAutoPauseEnabledExtraKey])
+			require.Equal(t, "manual-choice", lite.Extra[service.IntelligenceSchedulingGenerationExtraKey])
 			account.Extra["openai_excel_bps"] = route != "bps"
 			require.Nil(t, AccountFromServiceShallow(account).OpenAICodexStateProbe)
 		})

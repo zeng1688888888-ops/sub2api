@@ -11,8 +11,8 @@ import (
 )
 
 // ListDueOpenAICodexStateProbeAccounts keeps the periodic monitor bounded at
-// the database layer. It only returns active OpenAI OAuth-like accounts; the
-// service still applies the final account capability checks before probing.
+// the database layer. Quota/cooldown checks run before the output limit; the
+// service rechecks the latest account immediately before executing a probe.
 func (r *accountRepository) ListDueOpenAICodexStateProbeAccounts(ctx context.Context, now time.Time, limit int) ([]service.Account, error) {
 	return r.listDueAccountAutomaticProbes(ctx, now, limit, service.OpenAICodexStateProbeSnapshotExtraKey, "last_probe_at")
 }
@@ -29,6 +29,42 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 		return nil, errors.New("account repository SQL executor not configured")
 	}
 
+	result := make([]service.Account, 0, limit)
+	// Page through due accounts without letting exhausted rows consume the limit.
+	const pageSize = 100
+	for offset := 0; ; offset += pageSize {
+		ids, err := r.listDueAccountAutomaticProbeIDs(ctx, now, pageSize, offset, extraKey, timeField)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) == 0 {
+			return result, nil
+		}
+		accounts, err := r.GetByIDs(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		byID := make(map[int64]*service.Account, len(accounts))
+		for _, account := range accounts {
+			if account != nil {
+				byID[account.ID] = account
+			}
+		}
+		for _, id := range ids {
+			if account := byID[id]; service.AccountAutomaticProbeAvailable(account, now) {
+				result = append(result, *account)
+				if len(result) == limit {
+					return result, nil
+				}
+			}
+		}
+		if len(ids) < pageSize {
+			return result, nil
+		}
+	}
+}
+
+func (r *accountRepository) listDueAccountAutomaticProbeIDs(ctx context.Context, now time.Time, limit, offset int, extraKey, timeField string) ([]int64, error) {
 	rows, err := r.sql.QueryContext(ctx, `
 		WITH candidates AS (
 			SELECT
@@ -43,6 +79,11 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 				AND type IN ('oauth', 'setup-token')
 				AND parent_account_id IS NULL
 				AND COALESCE(extra ->> 'synthetic_ui_test', 'false') <> 'true'
+				AND (type <> 'oauth' OR lower(btrim(COALESCE(credentials->>'auth_mode',''))) <> 'agentidentity')
+				AND (rate_limit_reset_at IS NULL OR rate_limit_reset_at <= $6)
+				AND (overload_until IS NULL OR overload_until <= $6)
+				AND (temp_unschedulable_until IS NULL OR temp_unschedulable_until <= $6)
+				AND (NOT auto_pause_on_expired OR expires_at IS NULL OR expires_at > $6)
 		), parsed AS MATERIALIZED (
 			SELECT
 				id,
@@ -67,13 +108,12 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 			OR parsed_last_probe_at IS NULL
 			OR parsed_last_probe_at::timestamptz <= $1
 		ORDER BY parsed_last_probe_at::timestamptz NULLS FIRST, id
-		LIMIT $2
-	`, now.UTC().Add(-service.AccountAutomaticProbeInterval), limit, extraKey, timeField)
+		LIMIT $2 OFFSET $5
+	`, now.UTC().Add(-service.AccountAutomaticProbeInterval), limit, extraKey, timeField, offset, now.UTC())
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-
 	ids := make([]int64, 0, limit)
 	for rows.Next() {
 		var id int64
@@ -85,29 +125,16 @@ func (r *accountRepository) listDueAccountAutomaticProbes(ctx context.Context, n
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(ids) == 0 {
-		return []service.Account{}, nil
-	}
-
-	accounts, err := r.GetByIDs(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]service.Account, 0, len(accounts))
-	for _, account := range accounts {
-		if account != nil {
-			result = append(result, *account)
-		}
-	}
-	return result, nil
+	return ids, nil
 }
 
-// UpdateIntelligenceProbeSnapshot uses the current row's pause ownership, so a
-// manual scheduling change made during a probe cannot be undone by stale results.
-func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context, id int64, snapshot *service.OpenAICodexStateProbeSnapshot, pause, resume bool) (service.IntelligenceSchedulingTransition, error) {
+// UpdateIntelligenceProbeSnapshot checks the locked row's mode and generation.
+// A probe started before a manual scheduling change still records its answer,
+// but cannot pause the account or restore the old consecutive-failure count.
+func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context, id int64, snapshot *service.OpenAICodexStateProbeSnapshot, pause bool) (service.IntelligenceSchedulingTransition, error) {
 	var transition service.IntelligenceSchedulingTransition
 	if scoped := r.accountTransactionScope(ctx); scoped != r {
-		return scoped.UpdateIntelligenceProbeSnapshot(ctx, id, snapshot, pause, resume)
+		return scoped.UpdateIntelligenceProbeSnapshot(ctx, id, snapshot, pause)
 	}
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
@@ -116,23 +143,29 @@ func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context,
 	client := clientFromContext(ctx, r.client)
 	rows, err := client.QueryContext(ctx, `
  WITH locked AS MATERIALIZED (
-  SELECT id,schedulable,status,COALESCE(extra,'{}'::jsonb) AS extra
+  SELECT id,schedulable,COALESCE(extra,'{}'::jsonb) AS extra,
+   `+intelligenceSchedulingEligibleSQL+` AS eligible
   FROM accounts WHERE id=$2 AND deleted_at IS NULL FOR UPDATE
- ), decision AS (
-  SELECT *, ($3::boolean AND schedulable) AS do_pause,
-   ($4::boolean AND NOT schedulable AND status='active' AND extra->>'intelligence_auto_paused'='true') IS TRUE AS do_resume
+ ), generation AS (
+  SELECT *, COALESCE(extra->>'intelligence_scheduling_generation','') = COALESCE($1::jsonb->>'scheduling_generation','') AS same_generation
   FROM locked
+ ), decision AS (
+  SELECT *, ($3::boolean AND eligible AND schedulable AND same_generation
+   AND COALESCE(extra->'intelligence_auto_pause_enabled','false'::jsonb) = 'true'::jsonb) AS do_pause
+  FROM generation
  )
  UPDATE accounts a SET
-  schedulable=CASE WHEN d.do_pause THEN FALSE WHEN d.do_resume THEN TRUE ELSE d.schedulable END,
-  extra=(CASE WHEN d.do_pause THEN d.extra||'{"intelligence_auto_paused":true}'::jsonb
-              WHEN d.do_resume THEN d.extra-'intelligence_auto_paused' ELSE d.extra END)
-   ||jsonb_build_object('openai_codex_state_probe',$1::jsonb||jsonb_build_object('reason',
-       COALESCE($1::jsonb->>'reason','')||CASE WHEN d.do_pause THEN $5::text WHEN d.do_resume THEN $6::text ELSE '' END)),
+  schedulable=CASE WHEN d.do_pause THEN FALSE ELSE d.schedulable END,
+  extra=(CASE WHEN d.do_pause THEN d.extra||'{"intelligence_auto_paused":true}'::jsonb ELSE d.extra END)
+   ||jsonb_build_object('openai_codex_state_probe', $1::jsonb
+    ||CASE WHEN d.same_generation THEN '{}'::jsonb ELSE jsonb_build_object(
+      'consecutive_healthy',0,'consecutive_degraded',0,
+      'scheduling_generation',COALESCE(d.extra->>'intelligence_scheduling_generation','')) END
+    ||jsonb_build_object('reason', COALESCE($1::jsonb->>'reason','')||CASE WHEN d.do_pause THEN $4::text ELSE '' END)),
   updated_at=NOW()
  FROM decision d WHERE a.id=d.id
- RETURNING a.extra->'openai_codex_state_probe',d.do_pause,d.do_resume
-`, string(payload), id, pause, resume, service.IntelligencePauseReason, service.IntelligenceResumeReason)
+ RETURNING a.extra->'openai_codex_state_probe',d.do_pause
+`, string(payload), id, pause, service.IntelligencePauseReason)
 	if err != nil {
 		return transition, err
 	}
@@ -144,7 +177,7 @@ func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context,
 		return transition, service.ErrAccountNotFound
 	}
 	var saved []byte
-	if err := rows.Scan(&saved, &transition.Paused, &transition.Resumed); err != nil {
+	if err := rows.Scan(&saved, &transition.Paused); err != nil {
 		return transition, err
 	}
 	if err := rows.Close(); err != nil {
@@ -153,7 +186,7 @@ func (r *accountRepository) UpdateIntelligenceProbeSnapshot(ctx context.Context,
 	if err := json.Unmarshal(saved, snapshot); err != nil {
 		return transition, err
 	}
-	if transition.Paused || transition.Resumed {
+	if transition.Paused {
 		if err := enqueueSchedulerOutbox(ctx, client, service.SchedulerOutboxEventAccountChanged, &id, nil, nil); err != nil {
 			logger.LegacyPrintf("repository.account", "enqueue intelligence scheduling change failed: account=%d err=%v", id, err)
 		}

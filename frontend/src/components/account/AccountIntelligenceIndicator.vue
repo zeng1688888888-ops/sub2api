@@ -26,6 +26,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { probeOpenAIAccountIntelligence } from '@/api/admin/accounts'
+import { isCurrentIntelligenceSnapshot } from '@/utils/accountIntelligence'
 import { formatDateTimeToMinute } from '@/utils/format'
 import type { Account, OpenAICodexStateProbeSnapshot } from '@/types'
 
@@ -84,9 +85,9 @@ async function probe() {
     const result = await probeOpenAIAccountIntelligence(accountId, undefined, { signal: request.signal })
     if (request.signal.aborted || props.account.id !== accountId) return
     if (result.snapshot) {
+      if (!isCurrentIntelligenceSnapshot(props.account, result.snapshot)) return
       localSnapshot.value = result.snapshot
-      if (result.scheduling_resumed) emit('updated', result.snapshot, false)
-      else if (result.scheduling_paused) emit('updated', result.snapshot, true)
+      if (result.scheduling_paused) emit('updated', result.snapshot, true)
       else emit('updated', result.snapshot)
     } else {
       error.value = t('admin.accounts.stateProbe.requestFailed')

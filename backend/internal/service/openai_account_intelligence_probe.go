@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
@@ -41,12 +42,22 @@ func (s *AccountTestService) probeOpenAIAccountIntelligence(ctx context.Context,
 		return nil, ErrOpenAICodexStateProbeBusy
 	}
 	defer release()
-	if onlyDue {
-		account, err = s.accountRepo.GetByID(ctx, accountID)
-		if err != nil {
-			return nil, err
+	// Re-read under the probe guard; quota may have been exhausted since selection.
+	account, err = s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if account == nil {
+		return nil, ErrAccountNotFound
+	}
+	if reason := accountProbeUnavailableReason(account, time.Now()); reason != "" {
+		if onlyDue {
+			return nil, nil
 		}
-		if account == nil || !account.IsActive() || !account.IsOpenAIOAuthLike() || account.IsShadow() || account.IsSyntheticUITest() {
+		return nil, infraerrors.Conflict("ACCOUNT_PROBE_UNAVAILABLE", reason)
+	}
+	if onlyDue {
+		if !AccountAutomaticProbeAvailable(account, time.Now()) {
 			return nil, nil
 		}
 		snapshot := OpenAICodexStateProbeSnapshotFromAccount(account)

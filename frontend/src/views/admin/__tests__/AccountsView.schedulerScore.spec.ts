@@ -5,12 +5,14 @@ import AccountsView from '../AccountsView.vue'
 
 const {
   listAccounts,
+  setSchedulable,
   listWithEtag,
   getBatchTodayStats,
   getAllProxies,
   getAllGroups
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
+  setSchedulable: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
   getAllProxies: vi.fn(),
@@ -21,6 +23,7 @@ vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
       list: listAccounts,
+      setSchedulable,
       listWithEtag,
       getBatchTodayStats,
       getUpstreamBillingProbeSettings: vi.fn().mockResolvedValue({ enabled: true, interval_minutes: 30 }),
@@ -69,6 +72,7 @@ const DataTableStub = {
     <div data-test="data-table">
       <div v-for="row in data" :key="row.id" :data-test="'scheduler-score-' + row.id">
         <slot name="cell-scheduler_score" :row="row" />
+        <slot name="cell-schedulable" :row="row" />
       </div>
     </div>
   `
@@ -134,6 +138,7 @@ describe('admin AccountsView scheduler score column', () => {
     localStorage.clear()
 
     listAccounts.mockReset()
+    setSchedulable.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
     getAllProxies.mockReset()
@@ -250,4 +255,19 @@ describe('admin AccountsView scheduler score column', () => {
     expect(emptyCell.exists()).toBe(true)
     expect(emptyCell.text()).toBe('-')
   })
+  it.each([true, false])('manual enable preserves the stored auto-pause choice (%s)', async (enabled) => {
+    const paused = { ...baseAccount, id: 7, name: 'paused-gpt', type: 'oauth', schedulable: false, extra: { intelligence_auto_paused: true, intelligence_auto_pause_enabled: enabled } }
+    listAccounts.mockResolvedValueOnce({ items: [paused], total: 1, page: 1, page_size: 20, pages: 1 })
+    setSchedulable.mockResolvedValueOnce({ ...paused, schedulable: true, extra: { intelligence_auto_pause_enabled: enabled } })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('[data-testid="enable-scheduling"]').trigger('click')
+    await flushPromises()
+    expect(setSchedulable).toHaveBeenCalledWith(7, true)
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.get('[data-testid="intelligence-auto-pause-status"]').text()).toContain(enabled ? '.enabled' : '.monitorOnly')
+    expect(wrapper.find('[data-testid="intelligence-paused"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
 })

@@ -1,5 +1,13 @@
 export default {
     accounts: {
+      intelligenceScheduling: {
+        "autoPauseLabel": "智力连续两次失败时暂停调度",
+        "autoPauseHint": "默认关闭，智力测试和鹈鹕测试照常运行。开启后，连续两次智力测试明确未通过会暂停调度；网络错误不计入。暂停后需手动开启，关闭此选项也不会自动恢复调度。",
+        "enabled": "智力失败停调",
+        "monitorOnly": "仅检测",
+        "paused": "智力未通过，等待手动开启",
+        "enableManually": "手动开启"
+      },
       svgProbe: {
   "column": "鹈鹕测试",
   "settings": "鹈鹕测试设置",
@@ -38,7 +46,7 @@ export default {
   "routePool": "本次网络：多出口并发代理池",
   "routeDefault": "本次网络：账号默认网络（单代理／无代理）",
   "autoLabel": "自动 · 每8分钟",
-  "autoHint": "正常 GPT 账号的智力和鹈鹕测试均在上次完成8分钟后自动执行，后台每15秒检查到期任务。可手动测试，繁忙时排队。 连续两次明确未通过会暂停调度；网络错误不算未通过。暂停后继续检测，连续两次通过会自动恢复；手动关闭的调度不会自动开启。"
+  "autoHint": "正常 GPT 账号的智力和鹈鹕测试均在上次完成8分钟后自动执行，后台每15秒检查到期任务。默认仅检测，不因智力结果暂停调度。在添加或编辑账号中打开“智力连续两次失败时暂停调度”后，连续两次明确未通过才会暂停；网络错误不计入。暂停后继续检测，由你手动开启。 额度耗尽、429限流、冷却或账号不可用时跳过两种测试；已知额度恢复后再测，单纯关闭调度不影响检测。"
 },
       egressPool: {
   "title": "多出口并发",
@@ -236,6 +244,14 @@ export default {
         }
       },
       upstreamBilling: {
+        balance: "余额",
+        balanceUnknown: "未获取",
+        balanceNotProvided: "未提供",
+        balanceFailed: "获取失败",
+        balanceHistorical: "历史值",
+        balanceHint: "上游账号的钱包余额，随倍率一起刷新，仅供查看；不等同于本系统账号额度或 API Key 限额。",
+        balanceRestrictedHint: "上游仅返回 Key 限额或订阅额度，没有提供账号钱包余额。",
+        balanceHistoricalHint: "这是上次成功获取的余额，已过期或本次刷新失败，请刷新后确认。",
         trustWarning: '此倍率由上游站点针对当前 API Key 自行声明。Sub2API 无法验证该值是否与实际扣费一致；上游站点或中间代理可能返回伪造、过期或被篡改的数据。请结合账单、余额变化和实际用量自行核验。',
         autoProbe: '自动探测上游声明倍率',
         autoProbeHint: '启用后按全局周期刷新上游声明倍率；此开关本身不会修改账号倍率。',
@@ -243,7 +259,7 @@ export default {
         syncRateHint: '成功探测后自动更新账号倍率，同步的是不含高峰的基准倍率；探测失败或声明超出允许范围时保持不变。开启本项会同时打开“自动探测上游声明倍率”。',
         syncRateManagedHint: '当前倍率由上游声明的基准倍率（不含高峰）自动维护。',
         syncedRateTooltip: '该账号倍率由上游声明的基准倍率（不含高峰）自动同步',
-        manualProbe: '立即探测上游倍率',
+        manualProbe: '立即刷新上游倍率和余额',
         stale: '已过期',
         unsupported: '不支持',
         failed: '失败',

@@ -188,11 +188,14 @@ async function submitApiKeyAccount(
   return wrapper
 }
 
-async function openCodexImportStep(toggleClicks = 0) {
+async function openCodexImportStep(toggleClicks = 0, intelligenceToggleClicks = 0) {
   const wrapper = mountModal()
   await selectButtonByText(wrapper, 'OpenAI')
   for (let click = 0; click < toggleClicks; click += 1) {
     await wrapper.get('[data-testid="openai-long-context-billing-toggle"]').trigger('click')
+  }
+  for (let click = 0; click < intelligenceToggleClicks; click += 1) {
+    await wrapper.get('[data-testid="intelligence-auto-pause-toggle"]').trigger('click')
   }
   await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex import')
   await wrapper.get('form#create-account-form').trigger('submit.prevent')
@@ -218,6 +221,28 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('offers default-off intelligence auto-pause only for GPT subscription accounts', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    expect(wrapper.get('[data-testid="intelligence-auto-pause-toggle"]').attributes('aria-checked')).toBe('false')
+    await selectButtonByText(wrapper, 'API Key')
+    expect(wrapper.find('[data-testid="intelligence-auto-pause-toggle"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each(['session', 'pat'] as const)('keeps %s imports default-off and sends an explicit choice only after toggling', async kind => {
+    const mock = kind === 'session' ? importCodexSessionMock : createOpenAICodexPATMock
+    for (const clicks of [0, 1, 2]) {
+      mock.mockClear()
+      const wrapper = await openCodexImportStep(0, clicks)
+      await wrapper.get(kind === 'session' ? '[data-testid="import-codex-session"]' : '[data-testid="import-codex-pat"]').trigger('click')
+      await flushPromises()
+      expect(mock).toHaveBeenCalledTimes(1)
+      expect(mock.mock.calls[0]?.[0]?.extra?.intelligence_auto_pause_enabled).toBe(clicks === 0 ? undefined : clicks === 1)
+      wrapper.unmount()
+    }
+  })
 
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })

@@ -1,84 +1,91 @@
 <template>
-  <div v-if="eligible" class="flex h-6 min-w-[7rem] items-center gap-1">
-    <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-billing-details">
-      <template #trigger>
-        <span
-          class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
-          :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
-          data-testid="upstream-billing-rate"
-        >
-          {{ primaryValue }}
-        </span>
-      </template>
-      <div class="space-y-1">
-        <template v-if="hasEffectiveRate && data">
-          <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: data.group_rate_multiplier }) }}</p>
-          <p v-if="data.user_rate_multiplier != null">
-            {{ t('admin.accounts.upstreamBilling.userRate', { value: data.user_rate_multiplier }) }}
-          </p>
-          <p>
-            {{
-              data.peak_rate_enabled
-                ? t('admin.accounts.upstreamBilling.peakRate', {
-                    start: data.peak_start,
-                    end: data.peak_end,
-                    value: data.peak_rate_multiplier,
-                    timezone: data.timezone
-                  })
-                : t('admin.accounts.upstreamBilling.noPeakRate')
-            }}
-          </p>
-          <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
-          <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
-        </template>
-        <template v-else-if="stale && lastDetectedRate != null">
-          <p data-testid="upstream-billing-last-rate">
-            {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
-          </p>
-          <p data-testid="upstream-billing-last-time">
-            {{ t('admin.accounts.upstreamBilling.lastDetectedAt', { value: formatDate(snapshot?.received_at) }) }}
-          </p>
-          <p data-testid="upstream-billing-elapsed">
-            {{ t('admin.accounts.upstreamBilling.elapsedSince', { value: elapsedSinceLastSuccess }) }}
-          </p>
-        </template>
-        <p v-else>{{ statusLabel || '-' }}</p>
-        <p
-          v-if="probeEnabled && globalProbeEnabled !== false && nextProbeAt"
-          data-testid="upstream-billing-next-probe"
-        >
-          {{ t('admin.accounts.upstreamBilling.nextProbeAt', { value: formatDate(nextProbeAt) }) }}
-        </p>
-        <p class="mt-2 border-t border-white/15 pt-2" data-testid="upstream-billing-probe-state">
-          {{ t('admin.accounts.upstreamBilling.accountProbeState') }}
-          <span :class="probeEnabled ? 'text-emerald-400' : 'text-red-400'">
-            {{ probeEnabled ? t('admin.accounts.upstreamBilling.enabled') : t('admin.accounts.upstreamBilling.disabled') }}
+  <div v-if="eligible" class="min-w-[7rem] space-y-0.5">
+    <div class="flex min-h-6 items-center gap-1">
+      <HelpTooltip class="-ml-1" width-class="w-max max-w-[calc(100vw-2rem)]" data-testid="upstream-billing-details">
+        <template #trigger>
+          <span
+            class="cursor-help border-b border-dotted border-gray-300 text-sm font-medium dark:border-dark-600"
+            :class="hasEffectiveRate ? 'font-mono text-gray-800 dark:text-gray-200' : statusClass || 'text-gray-400 dark:text-gray-500'"
+            data-testid="upstream-billing-rate"
+          >
+            {{ primaryValue }}
           </span>
-        </p>
-        <p
-          v-if="globalProbeEnabled === false"
-          class="mt-1"
-          data-testid="upstream-billing-global-probe-state"
-        >
-          {{ t('admin.accounts.upstreamBilling.globalProbeState') }}
-          <span class="text-red-400">{{ t('admin.accounts.upstreamBilling.disabled') }}</span>
-        </p>
-      </div>
-    </HelpTooltip>
-    <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
-      {{ statusLabel }}
-    </span>
-    <button
-      type="button"
-      class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-      :disabled="probing"
-      :aria-label="t('admin.accounts.upstreamBilling.manualProbe')"
-      :title="t('admin.accounts.upstreamBilling.manualProbe')"
-      data-testid="upstream-billing-probe"
-      @click="$emit('probe')"
-    >
-      <Icon name="refresh" size="xs" :class="{ 'animate-spin': probing }" />
-    </button>
+        </template>
+        <div class="space-y-1">
+          <template v-if="hasEffectiveRate && data">
+            <p>{{ t('admin.accounts.upstreamBilling.groupRate', { value: data.group_rate_multiplier }) }}</p>
+            <p v-if="data.user_rate_multiplier != null">
+              {{ t('admin.accounts.upstreamBilling.userRate', { value: data.user_rate_multiplier }) }}
+            </p>
+            <p>
+              {{
+                data.peak_rate_enabled
+                  ? t('admin.accounts.upstreamBilling.peakRate', {
+                      start: data.peak_start,
+                      end: data.peak_end,
+                      value: data.peak_rate_multiplier,
+                      timezone: data.timezone
+                    })
+                  : t('admin.accounts.upstreamBilling.noPeakRate')
+              }}
+            </p>
+            <p>{{ t('admin.accounts.upstreamBilling.effectiveRate', { value: currentEffectiveRate ?? '-' }) }}</p>
+            <p>{{ t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(snapshot?.received_at) }) }}</p>
+          </template>
+          <template v-else-if="stale && lastDetectedRate != null">
+            <p data-testid="upstream-billing-last-rate">
+              {{ t('admin.accounts.upstreamBilling.lastDetectedRate', { value: lastDetectedRate }) }}
+            </p>
+            <p data-testid="upstream-billing-last-time">
+              {{ t('admin.accounts.upstreamBilling.lastDetectedAt', { value: formatDate(snapshot?.received_at) }) }}
+            </p>
+            <p data-testid="upstream-billing-elapsed">
+              {{ t('admin.accounts.upstreamBilling.elapsedSince', { value: elapsedSinceLastSuccess }) }}
+            </p>
+          </template>
+          <p v-else>{{ statusLabel || '-' }}</p>
+          <p
+            v-if="probeEnabled && globalProbeEnabled !== false && nextProbeAt"
+            data-testid="upstream-billing-next-probe"
+          >
+            {{ t('admin.accounts.upstreamBilling.nextProbeAt', { value: formatDate(nextProbeAt) }) }}
+          </p>
+          <p class="mt-2 border-t border-white/15 pt-2" data-testid="upstream-billing-probe-state">
+            {{ t('admin.accounts.upstreamBilling.accountProbeState') }}
+            <span :class="probeEnabled ? 'text-emerald-400' : 'text-red-400'">
+              {{ probeEnabled ? t('admin.accounts.upstreamBilling.enabled') : t('admin.accounts.upstreamBilling.disabled') }}
+            </span>
+          </p>
+          <p
+            v-if="globalProbeEnabled === false"
+            class="mt-1"
+            data-testid="upstream-billing-global-probe-state"
+          >
+            {{ t('admin.accounts.upstreamBilling.globalProbeState') }}
+            <span class="text-red-400">{{ t('admin.accounts.upstreamBilling.disabled') }}</span>
+          </p>
+        </div>
+      </HelpTooltip>
+      <span v-if="hasEffectiveRate && statusLabel" :class="statusClass" class="whitespace-nowrap text-[10px] font-medium">
+        {{ statusLabel }}
+      </span>
+      <button
+        type="button"
+        class="inline-flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+        :disabled="probing"
+        :aria-label="t('admin.accounts.upstreamBilling.manualProbe')"
+        :title="t('admin.accounts.upstreamBilling.manualProbe')"
+        data-testid="upstream-billing-probe"
+        @click="$emit('probe')"
+      >
+        <Icon name="refresh" size="xs" :class="{ 'animate-spin': probing }" />
+      </button>
+    </div>
+    <div class="flex flex-wrap items-center gap-x-1 text-xs" :title="balanceTooltip" data-testid="upstream-wallet-balance">
+      <span class="text-gray-400 dark:text-gray-500">{{ t('admin.accounts.upstreamBilling.balance') }}</span>
+      <span :class="balanceAmount == null ? 'text-gray-400 dark:text-gray-500' : balanceOutdated ? 'font-mono text-amber-600 dark:text-amber-400' : balanceAmount <= 0 ? 'font-mono text-red-600 dark:text-red-400' : 'font-mono text-gray-700 dark:text-gray-200'" data-testid="upstream-wallet-balance-value">{{ balanceText }}</span>
+      <span v-if="balanceAmount != null && balanceOutdated" class="text-[10px] text-amber-600 dark:text-amber-400" data-testid="upstream-wallet-balance-outdated">{{ t('admin.accounts.upstreamBilling.balanceHistorical') }}</span>
+    </div>
   </div>
   <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
 </template>
@@ -218,4 +225,33 @@ const formatDate = (value?: string) => value
       minute: '2-digit'
     })
   : '-'
+const balance = computed(() => snapshot.value?.balance)
+const balanceReceivedAt = computed(() => Date.parse(balance.value?.received_at ?? ''))
+const balanceFreshUntil = computed(() => Date.parse(balance.value?.fresh_until ?? ''))
+const balanceAmount = computed(() => {
+  const value = balance.value
+  if (!value || !['ok', 'failed'].includes(value.status)) return null
+  if (typeof value.amount !== 'number' || !Number.isFinite(value.amount) || !/^[A-Z]{3}$/.test(value.currency ?? '')) return null
+  if (!Number.isFinite(balanceReceivedAt.value) || balanceReceivedAt.value > props.now + CLOCK_SKEW_TOLERANCE_MS) return null
+  if (!Number.isFinite(balanceFreshUntil.value) || balanceFreshUntil.value <= balanceReceivedAt.value) return null
+  return value.amount
+})
+const balanceOutdated = computed(() => balance.value?.status !== 'ok' || props.now > balanceFreshUntil.value)
+const balanceText = computed(() => {
+  if (balanceAmount.value != null) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: balance.value!.currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(balanceAmount.value)
+  }
+  if (balance.value?.status === 'unsupported' || snapshot.value?.status === 'unsupported') return t('admin.accounts.upstreamBilling.balanceNotProvided')
+  if (balance.value?.status === 'failed') return t('admin.accounts.upstreamBilling.balanceFailed')
+  return t('admin.accounts.upstreamBilling.balanceUnknown')
+})
+const balanceTooltip = computed(() => {
+  const lines = [t('admin.accounts.upstreamBilling.balanceHint')]
+  if (balanceAmount.value != null) lines.push(t('admin.accounts.upstreamBilling.updatedAt', { value: formatDate(balance.value?.received_at) }))
+  if (balance.value?.last_error === 'key_quota_only' || balance.value?.last_error === 'subscription_only') lines.push(t('admin.accounts.upstreamBilling.balanceRestrictedHint'))
+  if (balance.value?.status === 'failed') lines.push(t('admin.accounts.upstreamBilling.balanceFailed'))
+  if (balanceAmount.value != null && balanceOutdated.value) lines.push(t('admin.accounts.upstreamBilling.balanceHistoricalHint'))
+  return lines.join('\n')
+})
+
 </script>

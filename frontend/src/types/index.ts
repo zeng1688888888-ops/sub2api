@@ -1103,7 +1103,18 @@ export interface UpstreamBillingData {
 
 export type UpstreamBillingProbeStatus = 'ok' | 'unsupported' | 'failed'
 
+export interface UpstreamBalanceProbeSnapshot {
+  status: UpstreamBillingProbeStatus
+  amount?: number
+  currency?: string
+  received_at?: string
+  fresh_until?: string
+  last_attempt_at: string
+  last_error?: string
+}
+
 export interface UpstreamBillingProbeSnapshot {
+  balance?: UpstreamBalanceProbeSnapshot
   status: UpstreamBillingProbeStatus
   data?: UpstreamBillingData
   received_at?: string
@@ -1234,6 +1245,7 @@ export interface OpenCodeGoUsageSettings {
 export type OpenAICodexStateProbeVerdict = 'healthy' | 'degraded' | 'inconclusive'
 
 export interface OpenAICodexStateProbeSnapshot {
+  scheduling_generation?: string
   method?: 'candy'
   route?: 'codex' | 'bps'
   answer?: string

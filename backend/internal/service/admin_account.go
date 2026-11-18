@@ -426,6 +426,7 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 	delete(accountExtra, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(accountExtra, AccountSVGProbeExtraKey)
 	delete(accountExtra, IntelligenceAutoPauseExtraKey)
+	delete(accountExtra, IntelligenceSchedulingGenerationExtraKey)
 	accountExtra = prepareCodexFingerprintExtraForCreate(input.Platform, input.Type, accountExtra)
 	account := &Account{
 		Name:        input.Name,
@@ -439,6 +440,13 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		Priority:    input.Priority,
 		Status:      StatusActive,
 		Schedulable: true,
+	}
+	requestedIntelligenceAutoPause, err := requestedIntelligenceAutoPauseSetting(account, accountExtra)
+	if err != nil {
+		return nil, err
+	}
+	if requestedIntelligenceAutoPause != nil {
+		ApplyIntelligenceAutoPauseSetting(account, *requestedIntelligenceAutoPause)
 	}
 	if input.ProbeEnabled != nil && *input.ProbeEnabled {
 		if !isUpstreamBillingProbeAccount(account) {
@@ -682,6 +690,10 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// 关闭配额限制时前端会删除 quota_* 键并提交 extra:{}，此时也必须落库。
 	requestedProbeEnabledUpdate := input.ProbeEnabled
 	requestedRateSyncEnabledUpdate := input.RateSyncEnabled
+	requestedIntelligenceAutoPauseUpdate, err := requestedIntelligenceAutoPauseSetting(account, input.Extra)
+	if err != nil {
+		return nil, err
+	}
 	if input.Extra != nil {
 		requestedProbeEnabled, hasRequestedProbeEnabled := normalizedExtra[UpstreamBillingProbeEnabledExtraKey]
 		if hasRequestedProbeEnabled {
@@ -705,6 +717,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		delete(normalizedExtra, OpenAICodexStateProbeSnapshotExtraKey)
 		delete(normalizedExtra, AccountSVGProbeExtraKey)
 		delete(normalizedExtra, IntelligenceAutoPauseExtraKey)
+		delete(normalizedExtra, IntelligenceAutoPauseEnabledExtraKey)
+		delete(normalizedExtra, IntelligenceSchedulingGenerationExtraKey)
 		// 目录观察和能力 metadata 只由同步写入。表单里的旧值或注入值不能进入本次更新。
 		delete(normalizedExtra, grokObservedModelsExtraKey)
 		delete(normalizedExtra, UpstreamModelMetadataExtraKey)
@@ -730,6 +744,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			OpenAICodexStateProbeSnapshotExtraKey,
 			AccountSVGProbeExtraKey,
 			IntelligenceAutoPauseExtraKey,
+			IntelligenceAutoPauseEnabledExtraKey,
+			IntelligenceSchedulingGenerationExtraKey,
 		} {
 			if v, ok := account.Extra[key]; ok {
 				normalizedExtra[key] = v
@@ -912,12 +928,16 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			requestedProbeEnabledUpdate,
 			requestedRateSyncEnabledUpdate,
 			input.RateMultiplier,
+			requestedIntelligenceAutoPauseUpdate,
 		); err != nil {
 			return nil, err
 		}
 		billingSettingsAppliedAtomically = true
 	}
 	if !billingSettingsAppliedAtomically {
+		if requestedIntelligenceAutoPauseUpdate != nil {
+			ApplyIntelligenceAutoPauseSetting(account, *requestedIntelligenceAutoPauseUpdate)
+		}
 		if err := s.accountRepo.Update(ctx, account); err != nil {
 			return nil, err
 		}
@@ -984,6 +1004,8 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	delete(updates, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(updates, AccountSVGProbeExtraKey)
 	delete(updates, IntelligenceAutoPauseExtraKey)
+	delete(updates, IntelligenceAutoPauseEnabledExtraKey)
+	delete(updates, IntelligenceSchedulingGenerationExtraKey)
 	if _, exists := updates[openAILongContextBillingEnabledKey]; exists {
 		account, err := s.accountRepo.GetByID(ctx, id)
 		if err != nil {
@@ -1019,6 +1041,8 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	delete(input.Extra, OpenAICodexStateProbeSnapshotExtraKey)
 	delete(input.Extra, AccountSVGProbeExtraKey)
 	delete(input.Extra, IntelligenceAutoPauseExtraKey)
+	delete(input.Extra, IntelligenceAutoPauseEnabledExtraKey)
+	delete(input.Extra, IntelligenceSchedulingGenerationExtraKey)
 
 	if len(input.AccountIDs) == 0 && input.Filters != nil {
 		accountIDs, err := s.resolveBulkUpdateTargetIDs(ctx, input.Filters)
@@ -1398,6 +1422,7 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
+
 	updated, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
