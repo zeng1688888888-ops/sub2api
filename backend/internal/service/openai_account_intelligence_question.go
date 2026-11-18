@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,16 @@ func openAIIntelligenceProbeUnsupportedReason(account *Account) string {
 func (s *AccountTestService) runOpenAIIntelligenceQuestion(ctx context.Context, account *Account, model string) (*openAIIntelligenceSample, error) {
 	if s.openaiGatewayService == nil {
 		return nil, errors.New("OpenAI gateway unavailable")
+	}
+	if concurrency := s.openaiGatewayService.concurrencyService; concurrency != nil {
+		slot, err := concurrency.AcquireAccountSlot(ctx, account.ID, account.Concurrency)
+		if err != nil {
+			return nil, fmt.Errorf("acquire account concurrency slot: %w", err)
+		}
+		if !slot.Acquired {
+			return nil, errors.New("account concurrency is full")
+		}
+		defer slot.ReleaseFunc()
 	}
 	body, err := json.Marshal(map[string]any{
 		"model": model, "stream": true, "store": false,
