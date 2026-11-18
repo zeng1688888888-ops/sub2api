@@ -476,6 +476,8 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 		},
 		User:    &User{ID: 2004},
 		Account: &Account{ID: 3004},
+		// The peak window excludes 23:59, so do not depend on the wall clock.
+		PricingAt: time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC),
 	})
 
 	require.NoError(t, err)
@@ -1172,6 +1174,48 @@ func TestOpenAIGatewayServiceRecordUsage_ClampsActualInputTokensToZero(t *testin
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, 0, usageRepo.lastLog.InputTokens)
+}
+
+func TestOpenAIRecordUsageExcelBPSCacheWritePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint string
+		enabled        bool
+		wantAsInput    bool
+	}{
+		{"BPS opt-in", "/basispoints/api/responses", true, true},
+		{"BPS default", "/basispoints/api/responses", false, false},
+		{"other route", "/v1/responses", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := &openAIRecordUsageLogRepoStub{inserted: true}
+			svc := newOpenAIRecordUsageServiceForTest(logs, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+			usage := OpenAIUsage{InputTokens: 1000, CacheReadInputTokens: 100, CacheCreationInputTokens: 200, CacheCreation5mTokens: 50, CacheCreation1hTokens: 150}
+			result := &OpenAIForwardResult{RequestID: "resp_bps_write", Model: "gpt-5.6-sol", UpstreamEndpoint: tc.endpoint, Usage: usage}
+			err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
+				Result: result, APIKey: &APIKey{ID: 1}, User: &User{ID: 2},
+				Account: &Account{ID: 3, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Extra: map[string]any{
+					"openai_excel_bps": true, "openai_excel_bps_cache_creation_as_input": tc.enabled,
+				}},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, logs.lastLog)
+			require.Equal(t, usage, result.Usage)
+			require.Equal(t, 100, logs.lastLog.CacheReadTokens)
+			if tc.wantAsInput {
+				require.Equal(t, 900, logs.lastLog.InputTokens)
+				require.Zero(t, logs.lastLog.CacheCreationTokens)
+				require.Zero(t, logs.lastLog.CacheCreation5mTokens)
+				require.Zero(t, logs.lastLog.CacheCreation1hTokens)
+				require.Zero(t, logs.lastLog.CacheCreationCost)
+			} else {
+				require.Equal(t, 700, logs.lastLog.InputTokens)
+				require.Equal(t, 200, logs.lastLog.CacheCreationTokens)
+				require.Equal(t, 50, logs.lastLog.CacheCreation5mTokens)
+				require.Equal(t, 150, logs.lastLog.CacheCreation1hTokens)
+				require.Positive(t, logs.lastLog.CacheCreationCost)
+			}
+		})
+	}
 }
 
 func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndStats(t *testing.T) {
@@ -3267,6 +3311,18 @@ func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIAccount(t *testing.T) {
 		apiKey,
 		&Account{Platform: PlatformGrok, Type: AccountTypeAPIKey},
 		"priority",
+	))
+}
+
+// "免费 Fast" 只把 priority 降到 Standard 价；Ultrafast 是独立的更高档位，
+// 分组强制 Ultrafast 时仍按 Ultrafast 计费。
+func TestGroupBillsOpenAIFastAtStandardExcludesUltrafast(t *testing.T) {
+	apiKey := &APIKey{Group: &Group{Platform: PlatformOpenAI, FreeOpenAIFast: true, ForceOpenAIUltrafast: true}}
+
+	require.False(t, groupBillsOpenAIFastAtStandard(
+		apiKey,
+		&Account{Platform: PlatformOpenAI, Type: AccountTypeOAuth},
+		OpenAIFastTierUltrafast,
 	))
 }
 
