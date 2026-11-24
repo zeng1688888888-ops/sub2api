@@ -21,7 +21,7 @@ func TestUpstreamBalanceSnapshotSurvivesEditAndClearsOnIdentityChange(t *testing
 	now := time.Now().UTC()
 	amount := 8465.83
 	snapshot := &service.UpstreamBillingProbeSnapshot{Status: "ok", LastAttemptAt: now, Balance: &service.UpstreamBalanceProbeSnapshot{Status: "ok", Amount: &amount, Currency: "USD", ReceivedAt: &now, FreshUntil: &now, LastAttemptAt: now}}
-	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, stale, snapshot, nil))
+	require.NoError(t, repo.UpdateUpstreamBillingProbeSnapshot(ctx, stale, snapshot, nil, service.BillingGroupInfo{}))
 	stale.Name = "renamed"
 	require.NoError(t, repo.Update(ctx, stale))
 	got, err := repo.GetByID(ctx, a.ID)

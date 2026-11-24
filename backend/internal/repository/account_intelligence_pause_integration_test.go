@@ -23,7 +23,7 @@ func TestIntelligenceSchedulingOptInLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.Schedulable)
 	enabled := true
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, nil, nil, nil, &enabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &enabled}))
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.True(t, got.IntelligenceAutoPauseEnabled())
@@ -74,7 +74,7 @@ func TestIntelligenceSchedulingOptInLifecycle(t *testing.T) {
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	disabled := false
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, nil, nil, nil, &disabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &disabled}))
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.False(t, got.Schedulable)
@@ -99,7 +99,7 @@ func TestIntelligenceSchedulingOptInLifecycle(t *testing.T) {
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.False(t, got.IntelligenceAutoPauseEnabled())
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, nil, nil, nil, &enabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &enabled}))
 	_, err = repo.BulkUpdate(ctx, []int64{a.ID}, service.AccountBulkUpdate{Schedulable: &enabled})
 	require.NoError(t, err)
 	got, err = repo.GetByID(ctx, a.ID)
@@ -117,16 +117,16 @@ func TestIntelligenceOptInSurvivesUnrelatedStaleEdit(t *testing.T) {
 	current, err := repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	enabled := true
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, current, nil, nil, nil, &enabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, current, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &enabled}))
 	stale.Name = "renamed"
 	stale.Extra = map[string]any{"note": "keep"}
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, stale, nil, nil, nil, nil))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, stale, service.AccountBillingSettingsUpdate{}))
 	got, err := repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.True(t, got.IntelligenceAutoPauseEnabled())
 	require.Equal(t, "keep", got.Extra["note"])
 	disabled := false
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, nil, nil, nil, &disabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, got, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &disabled}))
 	require.NoError(t, repo.Update(ctx, stale))
 	got, err = repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
@@ -145,7 +145,7 @@ func TestIntelligenceSettingEditCannotReopenConcurrentAutoPause(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, transition.Paused)
 	disabled := false
-	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, stale, nil, nil, nil, &disabled))
+	require.NoError(t, repo.UpdateWithAccountBillingSettings(ctx, stale, service.AccountBillingSettingsUpdate{IntelligenceAutoPauseEnabled: &disabled}))
 	got, err := repo.GetByID(ctx, a.ID)
 	require.NoError(t, err)
 	require.False(t, got.IntelligenceAutoPauseEnabled())
