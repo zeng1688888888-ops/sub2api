@@ -373,6 +373,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/opencode-go-usage/settings", h.Admin.Account.GetOpenCodeGoUsageSettings)
 		accounts.PUT("/opencode-go-usage/settings", h.Admin.Account.UpdateOpenCodeGoUsageSettings)
 		accounts.GET("/svg-probe/settings", h.Admin.Account.GetSVGProbeSettings)
+		accounts.GET("/svg-probe/reasoning-efforts", h.Admin.Account.GetSVGProbeReasoningEfforts)
 		accounts.PUT("/svg-probe/settings", h.Admin.Account.SaveSVGProbeSettings)
 		accounts.POST("/:id/svg-probe", h.Admin.Account.SVGProbe)
 		accounts.GET("/:id/svg-probe/:result_id/image", h.Admin.Account.SVGProbeImage)

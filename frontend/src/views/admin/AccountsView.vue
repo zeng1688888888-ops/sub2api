@@ -17,7 +17,7 @@
             @create="showCreate = true"
           >
             <template #after>
-              <button type="button" class="btn btn-secondary" @click="showSVGProbeSettings = true">{{ t('admin.accounts.svgProbe.settings') }}</button>
+              <button type="button" class="btn btn-secondary" @click="openSVGProbeSettings()">{{ t('admin.accounts.svgProbe.settings') }}</button>
               <!-- Auto Refresh Dropdown -->
               <div class="relative" ref="autoRefreshDropdownRef">
                 <button
@@ -306,7 +306,7 @@
             </div>
           </template>
           <template #cell-svg_probe="{ row }">
-            <AccountSVGProbeCell :account="row" @updated="handleAccountUpdated" @settings="showSVGProbeSettings = true" />
+            <AccountSVGProbeCell :account="row" @updated="handleAccountUpdated" @settings="openSVGProbeSettings" />
           </template>
           <template #cell-schedulable="{ row }">
             <AccountSchedulingControl :account="row" :busy="togglingSchedulable === row.id" @change="schedulable => handleSetSchedulable(row, schedulable)" />
@@ -704,7 +704,16 @@ const accountToolsDropdownStyle = computed(() => ({
 const hiddenColumns = reactive<Set<string>>(new Set())
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const showSVGProbeSettings = ref(false)
-const svgProbeTargetIDs = computed(() => selIds.value.length ? [...selIds.value] : accounts.value.filter(a => a.platform === 'openai' && ['oauth', 'setup-token'].includes(a.type) && !a.parent_account_id).map(a => a.id))
+const svgProbeAccountID = ref<number>()
+function openSVGProbeSettings(accountId?: number) {
+  svgProbeAccountID.value = accountId
+  showSVGProbeSettings.value = true
+}
+const svgProbeTargetIDs = computed(() => {
+  if (svgProbeAccountID.value !== undefined) return [svgProbeAccountID.value]
+  if (selIds.value.length) return [...selIds.value]
+  return accounts.value.filter(a => a.platform === 'openai' && ['oauth', 'setup-token'].includes(a.type) && !a.parent_account_id).map(a => a.id)
+})
 
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.

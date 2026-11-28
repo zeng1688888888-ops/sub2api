@@ -7,10 +7,14 @@ import { formatDateTimeToMinute } from '@/utils/format'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 
 const props = defineProps<{ account: Account }>()
-const emit = defineEmits<{ updated: [account: Account]; settings: [] }>()
+const emit = defineEmits<{ updated: [account: Account]; settings: [accountId?: number] }>()
 const { t } = useI18n()
 const local = ref<AccountSVGProbeResult | null>(null)
 const result = computed(() => local.value ?? props.account.svg_probe)
+const modelAndEffort = computed(() => {
+  const probe = result.value
+  return probe?.reasoning_effort ? `${probe.model} · ${t(`admin.accounts.svgProbe.efforts.${probe.reasoning_effort}`)}` : probe?.model
+})
 const supported = computed(() => props.account.platform === 'openai' && ['oauth', 'setup-token'].includes(props.account.type) && !props.account.parent_account_id)
 const running = ref(false)
 const busy = computed(() => running.value || props.account.svg_probe_running)
@@ -49,7 +53,11 @@ async function run() {
     if (request.signal.aborted || props.account.id !== id) return
     local.value = probe
     emit('updated', { ...props.account, svg_probe: probe, svg_probe_running: false })
-  } catch (e) { if (!request.signal.aborted) error.value = (e as Error).message || t('admin.accounts.svgProbe.failed') }
+  } catch (e) {
+    if (request.signal.aborted) return
+    if ((e as { reason?: string }).reason === 'SVG_PROBE_EFFORT_REQUIRED') emit('settings', id)
+    else error.value = (e as Error).message || t('admin.accounts.svgProbe.failed')
+  }
   finally { if (controller === request) { running.value = false; controller = undefined } }
 }
 </script>
@@ -72,7 +80,7 @@ async function run() {
       {{ imageError ? t('admin.accounts.svgProbe.imageMissing') : busy ? t('admin.accounts.svgProbe.running') : result?.message || t('admin.accounts.svgProbe.empty') }}
     </button>
     <div v-if="result" class="flex items-center justify-between gap-2 text-[10px] text-gray-400">
-      <span class="truncate" :title="result.model">{{ result.model }}</span>
+      <span class="truncate" :title="modelAndEffort">{{ modelAndEffort }}</span>
       <button type="button" class="shrink-0 underline" @click.stop="detail = true">{{ t('admin.accounts.svgProbe.details') }}</button>
     </div>
     <div v-if="result" class="text-[10px] text-gray-400">{{ formatDateTimeToMinute(result.finished_at) }}</div>
@@ -84,7 +92,7 @@ async function run() {
         <iframe v-if="imageURL && isHTML" :srcdoc="previewHTML" sandbox="" referrerpolicy="no-referrer" :title="t('admin.accounts.svgProbe.preview')" class="h-[65vh] w-full rounded-lg border-0 bg-white" />
         <img v-else-if="imageURL" :src="imageURL" :alt="t('admin.accounts.svgProbe.preview')" class="max-h-[60vh] w-full rounded-lg bg-white object-contain" />
         <p class="text-sm text-gray-600 dark:text-gray-300">{{ result.message }}</p>
-        <div class="text-xs text-gray-400">{{ result.model }} · {{ (result.latency_ms / 1000).toFixed(1) }}s</div>
+        <div class="text-xs text-gray-400">{{ modelAndEffort }} · {{ (result.latency_ms / 1000).toFixed(1) }}s</div>
         <p v-if="result.route" class="text-xs text-gray-500">{{ t(result.route === 'egress_pool' ? 'admin.accounts.svgProbe.routePool' : 'admin.accounts.svgProbe.routeDefault') }}</p>
         <label class="input-label">{{ t('admin.accounts.svgProbe.usedPrompt') }} #{{ result.prompt_index + 1 }}</label>
         <pre class="whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-900">{{ result.prompt }}</pre>

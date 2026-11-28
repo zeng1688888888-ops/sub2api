@@ -18,6 +18,16 @@ func (h *AccountHandler) GetSVGProbeSettings(c *gin.Context) {
 	}
 	response.Success(c, v)
 }
+
+func (h *AccountHandler) GetSVGProbeReasoningEfforts(c *gin.Context) {
+	levels, err := service.AccountSVGProbeReasoningEfforts(c.Query("model"))
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, levels)
+}
+
 func (h *AccountHandler) SaveSVGProbeSettings(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 	var v service.AccountSVGProbeSettings

@@ -1321,6 +1321,7 @@ export interface AccountSVGProbeResult {
   id: string
   status: 'generated' | 'failed'
   model: string
+  reasoning_effort?: string
   prompt: string
   prompt_index: number
   started_at: string

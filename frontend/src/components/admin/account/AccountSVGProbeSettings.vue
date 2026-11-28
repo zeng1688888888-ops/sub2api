@@ -2,14 +2,17 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Account } from '@/types'
-import { getSVGProbeSettings, saveSVGProbeSettings, runSVGProbe } from '@/api/admin/accountSvgProbe'
+import { getSVGProbeReasoningEfforts, getSVGProbeSettings, saveSVGProbeSettings, runSVGProbe } from '@/api/admin/accountSvgProbe'
 import { getById, list } from '@/api/admin/accounts'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 
 const props = defineProps<{ show: boolean; accountIds: number[] }>()
 const emit = defineEmits<{ close: []; updated: [account: Account] }>()
 const { t } = useI18n()
-const model = ref('gpt-6.1-sol')
+const model = ref('')
+const reasoningEffort = ref('')
+const effortOptions = ref<string[]>([])
+const effortError = ref('')
 const useEgressPool = ref(false)
 const prompts = ref<string[]>([])
 const defaultPrompts = ["创建一个 HTML，内容是 SVG 绘制一个鹈鹕骑自行车的 2D 动画，你不需要任何测试，不要读取本地环境和缓存","创建一个 HTML，内容是 SVG 绘制一个秦始皇开坦克的 2D 动画，你不需要任何测试，不要读取本地环境和缓存"]
@@ -24,27 +27,61 @@ const total = ref(0)
 const outcomes = ref<{ id: number; name: string; message: string; status: string }[]>([])
 let controller: AbortController | undefined
 let epoch = 0
-const valid = computed(() => /^gpt-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(model.value.trim()) && !model.value.startsWith('gpt-image-') && prompts.value.length > 0 && prompts.value.length <= 30 && prompts.value.every(p => p.trim().length > 0 && [...p.trim()].length <= 4000))
+const validModel = computed(() => /^gpt-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(model.value.trim()) && !model.value.trim().toLowerCase().startsWith('gpt-image-'))
+const valid = computed(() => validModel.value && effortOptions.value.includes(reasoningEffort.value) && prompts.value.length > 0 && prompts.value.length <= 30 && prompts.value.every(p => p.trim().length > 0 && [...p.trim()].length <= 4000))
 watch(() => props.show, async show => {
   const current = ++epoch
   if (!show) return
   loading.value = true; error.value = ''; saved.value = false; outcomes.value = []; completed.value = 0
-  try { const config = await getSVGProbeSettings(); if (epoch === current) { model.value = config.model; prompts.value = config.prompts; useEgressPool.value = config.use_egress_pool === true } }
+  model.value = ''; reasoningEffort.value = ''; prompts.value = []
+  try {
+    const config = await getSVGProbeSettings()
+    if (epoch !== current) return
+    model.value = config.model
+    reasoningEffort.value = config.reasoning_effort ?? ''
+    prompts.value = config.prompts
+    useEgressPool.value = config.use_egress_pool === true
+  }
   catch (e) { if (epoch === current) error.value = (e as Error).message }
   finally { if (epoch === current) loading.value = false }
 }, { immediate: true })
-watch([model, prompts, useEgressPool], () => { saved.value = false }, { deep: true })
+watch(() => props.show && validModel.value ? model.value.trim() : '', async (name, _, onCleanup) => {
+  effortOptions.value = []
+  effortError.value = ''
+  if (!name) return
+  const request = new AbortController()
+  onCleanup(() => request.abort())
+  try {
+    const options = await getSVGProbeReasoningEfforts(name, request.signal)
+    if (request.signal.aborted) return
+    effortOptions.value = options
+    if (!options.includes(reasoningEffort.value)) reasoningEffort.value = ''
+  } catch (e) {
+    if (!request.signal.aborted) effortError.value = (e as Error).message
+  }
+})
+watch([model, reasoningEffort, prompts, useEgressPool], () => { saved.value = false }, { deep: true })
 onBeforeUnmount(() => { ++epoch; controller?.abort() })
 function close() { ++epoch; controller?.abort(); emit('close') }
 async function save() {
   if (!valid.value) { error.value = t('admin.accounts.svgProbe.invalidSettings'); return false }
   saving.value = true; error.value = ''; saved.value = false
-  try { await saveSVGProbeSettings({ model: model.value.trim(), prompts: prompts.value.map(p => p.trim()), use_egress_pool: useEgressPool.value }); saved.value = true; return true }
+  try {
+    await saveSVGProbeSettings({
+      model: model.value.trim(),
+      reasoning_effort: reasoningEffort.value,
+      prompts: prompts.value.map(p => p.trim()),
+      use_egress_pool: useEgressPool.value
+    })
+    saved.value = true
+    return true
+  }
   catch (e) { error.value = (e as Error).message; return false }
   finally { saving.value = false }
 }
 async function batch(all = false) {
-  if (running.value || (!all && !props.accountIds.length) || !(await save())) return
+  const current = epoch
+  if (running.value || saving.value || (!all && !props.accountIds.length) || !(await save()) || epoch !== current) return
   const request = new AbortController(); controller = request
   const ids = [...new Set(props.accountIds)]
   if (all) {
@@ -94,10 +131,23 @@ async function batch(all = false) {
       <p class="text-xs text-gray-500">{{ t('admin.accounts.svgProbe.batchHint') }}</p>
       <p v-if="loading" class="text-sm text-gray-400">{{ t('common.loading') }}</p>
       <template v-else>
-        <label class="block"><span class="input-label">{{ t('admin.accounts.svgProbe.model') }}</span>
-          <input v-model="model" class="input" :disabled="running || saving" placeholder="gpt-6.1-sol" list="svg-text-models" />
-          <datalist id="svg-text-models"><option value="gpt-6.1-sol" /><option value="gpt-6-astra" /></datalist>
-        </label>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="block">
+            <span class="input-label">{{ t('admin.accounts.svgProbe.model') }}</span>
+            <input v-model.lazy.trim="model" class="input" :disabled="running || saving" placeholder="gpt-6.1-sol" list="svg-text-models" @input="reasoningEffort = ''" />
+            <datalist id="svg-text-models"><option value="gpt-6.2-astra" /><option value="gpt-6.2-sol" /><option value="gpt-6.1-sol" /><option value="gpt-6-astra" /></datalist>
+          </label>
+          <label class="block">
+            <span class="input-label">{{ t('admin.accounts.svgProbe.reasoningEffort') }}</span>
+            <select v-model="reasoningEffort" class="input" required :disabled="running || saving || !effortOptions.length">
+              <option disabled value="">{{ t('admin.accounts.svgProbe.chooseEffort') }}</option>
+              <option v-for="level in effortOptions" :key="level" :value="level">{{ t(`admin.accounts.svgProbe.efforts.${level}`) }}</option>
+            </select>
+          </label>
+        </div>
+        <p v-if="effortError" role="alert" class="text-sm text-red-500">{{ effortError }}</p>
+        <p v-else-if="!reasoningEffort" class="text-xs text-gray-500">{{ t('admin.accounts.svgProbe.effortHint') }}</p>
+        <p v-else-if="reasoningEffort === 'ultra'" class="text-xs text-gray-500">{{ t('admin.accounts.svgProbe.ultraHint') }}</p>
         <label class="flex items-center gap-2 text-sm"><input v-model="useEgressPool" type="checkbox" :disabled="running || saving" />{{ t('admin.accounts.svgProbe.useEgressPool') }}</label>
         <p class="text-xs text-gray-500">{{ t('admin.accounts.svgProbe.routeHint') }}</p>
         <div class="flex items-center justify-between"><label class="input-label mb-0">{{ t('admin.accounts.svgProbe.prompts') }} ({{ prompts.length }}/30)</label>
@@ -122,7 +172,7 @@ async function batch(all = false) {
       <button v-if="running" type="button" class="btn btn-secondary" @click="controller?.abort()">{{ t('admin.accounts.svgProbe.stop') }}</button>
       <template v-else>
         <button type="button" class="btn btn-secondary" :disabled="loading || saving || !valid" @click="batch(true)">{{ t('admin.accounts.svgProbe.allAccounts') }}</button>
-        <button type="button" class="btn btn-secondary" :disabled="loading || saving" @click="save">{{ t('admin.accounts.svgProbe.save') }}</button>
+        <button type="button" class="btn btn-secondary" :disabled="loading || saving || !valid" @click="save">{{ t('admin.accounts.svgProbe.save') }}</button>
         <button type="button" class="btn btn-primary" :disabled="loading || saving || !valid || !accountIds.length" @click="batch(false)">{{ t('admin.accounts.svgProbe.saveAndRun', { count: accountIds.length }) }}</button>
       </template>
     </template>

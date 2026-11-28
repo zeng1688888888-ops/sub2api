@@ -14,12 +14,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -29,26 +32,31 @@ const accountSVGProbeSettingsKey = "account_svg_probe_settings"
 const accountSVGProbeMaxBytes = 1 << 20
 const accountSVGProbeTimeout = 5 * time.Minute
 
+var accountSVGProbeModelPattern = regexp.MustCompile(`^gpt-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$`)
+var errSVGProbeEffortRequired = infraerrors.BadRequest("SVG_PROBE_EFFORT_REQUIRED", "请先在鹈鹕测试设置中选择并保存推理强度")
+
 type AccountSVGProbeSettings struct {
-	Model         string   `json:"model"`
-	Prompts       []string `json:"prompts"`
-	UseEgressPool bool     `json:"use_egress_pool"`
+	Model           string   `json:"model"`
+	ReasoningEffort string   `json:"reasoning_effort"`
+	Prompts         []string `json:"prompts"`
+	UseEgressPool   bool     `json:"use_egress_pool"`
 }
 type AccountSVGProbeResult struct {
-	ID          string    `json:"id"`
-	Status      string    `json:"status"`
-	Model       string    `json:"model"`
-	Prompt      string    `json:"prompt"`
-	PromptIndex int       `json:"prompt_index"`
-	StartedAt   time.Time `json:"started_at"`
-	FinishedAt  time.Time `json:"finished_at"`
-	LatencyMS   int64     `json:"latency_ms"`
-	Failure     string    `json:"failure,omitempty"`
-	Message     string    `json:"message"`
-	HasSVG      bool      `json:"has_svg"`
-	MIMEType    string    `json:"mime_type,omitempty"`
-	Route       string    `json:"route,omitempty"`
-	SourceSaved bool      `json:"source_saved,omitempty"`
+	ID              string    `json:"id"`
+	Status          string    `json:"status"`
+	Model           string    `json:"model"`
+	ReasoningEffort string    `json:"reasoning_effort,omitempty"`
+	Prompt          string    `json:"prompt"`
+	PromptIndex     int       `json:"prompt_index"`
+	StartedAt       time.Time `json:"started_at"`
+	FinishedAt      time.Time `json:"finished_at"`
+	LatencyMS       int64     `json:"latency_ms"`
+	Failure         string    `json:"failure,omitempty"`
+	Message         string    `json:"message"`
+	HasSVG          bool      `json:"has_svg"`
+	MIMEType        string    `json:"mime_type,omitempty"`
+	Route           string    `json:"route,omitempty"`
+	SourceSaved     bool      `json:"source_saved,omitempty"`
 }
 
 func defaultAccountSVGProbeSettings() *AccountSVGProbeSettings {
@@ -57,10 +65,37 @@ func defaultAccountSVGProbeSettings() *AccountSVGProbeSettings {
 		"创建一个 HTML，内容是 SVG 绘制一个秦始皇开坦克的 2D 动画，你不需要任何测试，不要读取本地环境和缓存",
 	}}
 }
+
+// AccountSVGProbeReasoningEfforts returns the catalog choices this Responses probe can request.
+func AccountSVGProbeReasoningEfforts(model string) ([]string, error) {
+	model = strings.TrimSpace(model)
+	if !accountSVGProbeModelPattern.MatchString(model) || isOpenAIImageModel(model) {
+		return nil, infraerrors.BadRequest("INVALID_SVG_PROBE_MODEL", "请输入 GPT 文本模型名称，例如 gpt-6.1-sol")
+	}
+	catalogModel := normalizeCodexModel(model)
+	levels := newConfiguredCodexModelDescriptor(catalogModel).SupportedReasoningLevels
+	efforts := make([]string, 0, len(levels))
+	for _, level := range levels {
+		// Earlier Codex models advertise client-side delegation. This probe uses
+		// hosted delegation, available on GPT-6.2 Sol and Astra.
+		if level.Effort == "ultra" && openai.GPT62ModelID(catalogModel) == "" {
+			continue
+		}
+		efforts = append(efforts, level.Effort)
+	}
+	return efforts, nil
+}
+
 func validateAccountSVGProbeSettings(v *AccountSVGProbeSettings) error {
 	v.Model = strings.TrimSpace(v.Model)
-	if !regexp.MustCompile("^gpt-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$").MatchString(v.Model) || isOpenAIImageModel(v.Model) {
-		return infraerrors.BadRequest("INVALID_SVG_PROBE_MODEL", "请输入 GPT 文本模型名称，例如 gpt-6.1-sol")
+	efforts, err := AccountSVGProbeReasoningEfforts(v.Model)
+	if err != nil {
+		return err
+	}
+	v.ReasoningEffort = strings.ToLower(strings.TrimSpace(v.ReasoningEffort))
+	// Settings saved before the selector existed still need to open for editing.
+	if v.ReasoningEffort != "" && !slices.Contains(efforts, v.ReasoningEffort) {
+		return infraerrors.BadRequest("INVALID_SVG_PROBE_EFFORT", fmt.Sprintf("%s 支持的推理选项为 %s", v.Model, strings.Join(efforts, ", ")))
 	}
 	if len(v.Prompts) < 1 || len(v.Prompts) > 30 {
 		return infraerrors.BadRequest("INVALID_SVG_PROBE_PROMPTS", "请输入 1–30 条提示词")
@@ -97,6 +132,9 @@ func (s *AccountTestService) GetAccountSVGProbeSettings(ctx context.Context) (*A
 func (s *AccountTestService) SaveAccountSVGProbeSettings(ctx context.Context, v *AccountSVGProbeSettings) error {
 	if err := validateAccountSVGProbeSettings(v); err != nil {
 		return err
+	}
+	if v.ReasoningEffort == "" {
+		return errSVGProbeEffortRequired
 	}
 	if s == nil || s.settingService == nil || s.settingService.settingRepo == nil {
 		return errors.New("SVG probe settings unavailable")
@@ -218,6 +256,16 @@ func (s *AccountTestService) probeAccountSVG(ctx context.Context, id int64, only
 	if onlyDue && !accountSVGProbeDue(a, time.Now()) {
 		return nil, nil
 	}
+	settings, err := s.GetAccountSVGProbeSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if settings.ReasoningEffort == "" {
+		if onlyDue {
+			return nil, nil
+		}
+		return nil, errSVGProbeEffortRequired
+	}
 
 	s.svgProbeSlotsOnce.Do(func() { s.svgProbeSlots = make(chan struct{}, 2) })
 	select {
@@ -226,24 +274,23 @@ func (s *AccountTestService) probeAccountSVG(ctx context.Context, id int64, only
 	default:
 		return nil, infraerrors.Conflict("SVG_PROBE_BUSY", "已有两个SVG测试在运行，请稍后再试")
 	}
-	settings, err := s.GetAccountSVGProbeSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
 	selected, err := rand.Int(rand.Reader, big.NewInt(int64(len(settings.Prompts))))
 	if err != nil {
 		return nil, err
 	}
 	index := int(selected.Int64())
 	previous := AccountSVGProbeFromAccount(a)
-	result := &AccountSVGProbeResult{ID: uuid.NewString(), Status: "failed", Model: settings.Model, Prompt: settings.Prompts[index], PromptIndex: index, StartedAt: time.Now().UTC()}
+	result := &AccountSVGProbeResult{
+		ID: uuid.NewString(), Status: "failed", Model: settings.Model, ReasoningEffort: settings.ReasoningEffort,
+		Prompt: settings.Prompts[index], PromptIndex: index, StartedAt: time.Now().UTC(),
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, accountSVGProbeTimeout)
 	defer cancel()
 	result.Route = "account_default"
 	if settings.UseEgressPool && a.HasEgressPool() {
 		result.Route = "egress_pool"
 	}
-	data, mime, runErr := s.runAccountSVGProbe(probeCtx, a, settings.Model, result.Prompt, settings.UseEgressPool)
+	data, mime, runErr := s.runAccountSVGProbe(probeCtx, a, settings, result.Prompt)
 	if runErr == nil {
 		path, pathErr := accountSVGProbeFile(id, result.ID, mime)
 		if pathErr == nil {
@@ -300,7 +347,7 @@ func (s *AccountTestService) probeAccountSVG(ctx context.Context, id int64, only
 	}
 	return result, nil
 }
-func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account, model, prompt string, useEgressPool bool) ([]byte, string, error) {
+func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account, settings *AccountSVGProbeSettings, prompt string) ([]byte, string, error) {
 	// Probe routing is explicit and request-local: ordinary account networking by default.
 	// Never mutate the configured concurrency pool used by production requests.
 	requestAccount := *a
@@ -308,11 +355,24 @@ func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account,
 	for key, value := range a.Extra {
 		requestAccount.Extra[key] = value
 	}
-	if !useEgressPool {
+	if !settings.UseEgressPool {
 		delete(requestAccount.Extra, AccountEgressPoolExtraKey)
 	}
 	requestAccount.Extra["openai_ws_force_http"] = true
 	a = &requestAccount
+	effort := settings.ReasoningEffort
+	mappedModel := a.GetMappedModel(settings.Model)
+	if mappedModel != settings.Model {
+		levels, err := AccountSVGProbeReasoningEfforts(normalizeCodexModel(mappedModel))
+		if err != nil || !slices.Contains(levels, effort) {
+			return nil, "", fmt.Errorf("此账号映射到的模型 %s 不支持所选推理强度 %s", mappedModel, effort)
+		}
+	}
+	if a.IsExcelBPSEnabledForModel(settings.Model) {
+		if supported, err := basispoints.NormalizeEffort(effort); err != nil || supported != effort {
+			return nil, "", fmt.Errorf("此账号的 Excel BPS 路由不支持 %s，请选择 low、medium、high 或 xhigh", effort)
+		}
+	}
 	gateway := s.openaiGatewayService
 	if gateway.concurrencyService == nil {
 		return nil, "", errors.New("并发服务不可用")
@@ -326,7 +386,23 @@ func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account,
 	}
 	defer slot.ReleaseFunc()
 	instructions := "请按用户要求直接编写一份完整的 HTML 文档，内嵌 SVG 绘制 2D 动画。只返回 HTML 源码，不要解释，不要 Markdown 围栏。用 SVG SMIL 或内嵌 CSS @keyframes 实现循环动画，不要 JavaScript、事件处理属性、foreignObject、iframe、外部图片、字体、链接或任何网络资源。SVG 设置 viewBox，画面自适应窗口；主体须有明显运动，不能只是静态插图。不要调用工具、执行测试、读取本地环境或缓存。\n\n用户要求：\n"
-	body, err := json.Marshal(map[string]any{"model": model, "stream": true, "store": false, "reasoning": map[string]any{"effort": "high"}, "input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": instructions + prompt}}}}})
+	payload := map[string]any{
+		"model": settings.Model, "stream": true, "store": false,
+		"input": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": instructions + prompt}}}},
+	}
+	if effort == "ultra" {
+		// Ultra opts into delegation. Responses takes the model's underlying inference effort.
+		descriptor := newConfiguredCodexModelDescriptor(normalizeCodexModel(mappedModel))
+		if descriptor.MultiAgentReasoningEffort == nil {
+			return nil, "", fmt.Errorf("模型 %s 未提供多智能体推理强度", mappedModel)
+		}
+		effort = *descriptor.MultiAgentReasoningEffort
+		payload["multi_agent"] = map[string]bool{"enabled": true}
+	}
+	if effort != "none" {
+		payload["reasoning"] = map[string]string{"effort": effort}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, "", err
 	}
@@ -334,6 +410,9 @@ func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account,
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body)).WithContext(ctx)
 	c.Request.Header.Set("Content-Type", "application/json")
+	if settings.ReasoningEffort == "ultra" {
+		c.Request.Header.Set("OpenAI-Beta", "responses-multi-agent=v1")
+	}
 	c.Request.Header.Set("Session-Id", "account-svg-probe-"+uuid.NewString())
 	forwarded, err := gateway.Forward(pkghttputil.WithUpstreamCancellation(ctx), c, a, body)
 	if err != nil {
@@ -354,7 +433,7 @@ func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account,
 	if recorder.Code >= 400 {
 		return nil, "", &UpstreamFailoverError{StatusCode: recorder.Code}
 	}
-	text, err := svgProbeResponseText(recorder.Body.Bytes())
+	text, err := svgProbeResponseText(recorder.Body.Bytes(), settings.ReasoningEffort == "ultra")
 	if err != nil {
 		return nil, "", err
 	}
@@ -364,7 +443,7 @@ func (s *AccountTestService) runAccountSVGProbe(ctx context.Context, a *Account,
 	}
 	return safe, "text/html", nil
 }
-func svgProbeResponseText(body []byte) (string, error) {
+func svgProbeResponseText(body []byte, multiAgent bool) (string, error) {
 	var delta, final strings.Builder
 	completed := false
 	for _, payload := range openAICodexStateStreamEvents(body) {
@@ -374,7 +453,11 @@ func svgProbeResponseText(body []byte) (string, error) {
 			Response struct {
 				Status string `json:"status"`
 				Output []struct {
-					Type    string `json:"type"`
+					Type  string `json:"type"`
+					Phase string `json:"phase"`
+					Agent struct {
+						Name string `json:"agent_name"`
+					} `json:"agent"`
 					Content []struct {
 						Type string `json:"type"`
 						Text string `json:"text"`
@@ -395,11 +478,12 @@ func svgProbeResponseText(body []byte) (string, error) {
 			completed = true
 			final.Reset()
 			for _, item := range event.Response.Output {
-				if item.Type == "message" {
-					for _, c := range item.Content {
-						if c.Type == "output_text" {
-							_, _ = final.WriteString(c.Text)
-						}
+				if item.Type != "message" || item.Phase == "commentary" || (item.Agent.Name != "" && item.Agent.Name != "/root") {
+					continue
+				}
+				for _, c := range item.Content {
+					if c.Type == "output_text" {
+						_, _ = final.WriteString(c.Text)
 					}
 				}
 			}
@@ -413,7 +497,9 @@ func svgProbeResponseText(body []byte) (string, error) {
 	if final.Len() > 0 {
 		return final.String(), nil
 	}
-	if delta.Len() > 0 {
+	// Multi-agent deltas can interleave drafts from several agents. Only the
+	// root's completed output can be archived as the generated animation.
+	if !multiAgent && delta.Len() > 0 {
 		return delta.String(), nil
 	}
 	return "", errors.New("模型返回了空内容")

@@ -1,9 +1,17 @@
 import { apiClient } from '../client'
 import type { AccountSVGProbeResult } from '@/types'
 
-export interface SVGProbeSettings { model: string; prompts: string[]; use_egress_pool?: boolean }
+export interface SVGProbeSettings {
+  model: string
+  reasoning_effort: string
+  prompts: string[]
+  use_egress_pool?: boolean
+}
 export async function getSVGProbeSettings(): Promise<SVGProbeSettings> {
   return (await apiClient.get<SVGProbeSettings>('/admin/accounts/svg-probe/settings')).data
+}
+export async function getSVGProbeReasoningEfforts(model: string, signal?: AbortSignal): Promise<string[]> {
+  return (await apiClient.get<string[]>('/admin/accounts/svg-probe/reasoning-efforts', { params: { model }, signal })).data
 }
 export async function saveSVGProbeSettings(settings: SVGProbeSettings): Promise<SVGProbeSettings> {
   return (await apiClient.put<SVGProbeSettings>('/admin/accounts/svg-probe/settings', settings)).data
